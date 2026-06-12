@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  formto:
+    build: .
+    container_name: formto
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - RACK_ENV=production
+      - ADMIN_PASSWORD=wMlM4w1S&CYjZ*q
+    volumes:
+
+      - ./data:/app/data

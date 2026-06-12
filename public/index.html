@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FormTo - Send email directly from your code</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        [x-cloak] { display: none !important; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #080c14;
+            color: #c9d1e0;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 220px;
+            background: #0d1117;
+            border-right: 1px solid #1a2235;
+            min-height: 100vh;
+            position: fixed;
+            top: 0; left: 0;
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 16px;
+            border-radius: 7px;
+            margin: 2px 10px;
+            font-size: 13.5px;
+            font-weight: 500;
+            color: #6b7a99;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+        }
+        .nav-item:hover { background: #151d2e; color: #c9d1e0; }
+        .nav-item.active { background: rgba(99,102,241,0.12); color: #818cf8; }
+        .nav-item.active svg { color: #818cf8; }
+
+        /* Cards */
+        .card {
+            background: #0d1117;
+            border: 1px solid #1a2235;
+            border-radius: 10px;
+        }
+
+        /* Stat cards */
+        .stat-card {
+            background: #0d1117;
+            border: 1px solid #1a2235;
+            border-radius: 10px;
+            padding: 20px;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .stat-card:hover { border-color: #2a3a5c; transform: translateY(-1px); }
+
+        /* Inputs */
+        .input {
+            width: 100%;
+            background: #080c14;
+            border: 1px solid #1a2235;
+            border-radius: 7px;
+            padding: 8px 12px;
+            font-size: 13px;
+            color: #c9d1e0;
+            outline: none;
+            transition: border-color 0.15s;
+            font-family: 'Inter', sans-serif;
+        }
+        .input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.08); }
+        .input::placeholder { color: #374161; }
+
+        /* Buttons */
+        .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: none; }
+        .btn-primary { background: #4f46e5; color: #fff; }
+        .btn-primary:hover { background: #4338ca; }
+        .btn-secondary { background: #151d2e; color: #8b9cc4; border: 1px solid #1a2235; }
+        .btn-secondary:hover { background: #1e2843; color: #c9d1e0; }
+        .btn-danger { background: rgba(244,63,94,0.08); color: #f43f5e; border: 1px solid rgba(244,63,94,0.15); }
+        .btn-danger:hover { background: rgba(244,63,94,0.14); }
+        .btn-success { background: #059669; color: #fff; }
+        .btn-success:hover { background: #047857; }
+
+        /* Badge */
+        .badge-ok { display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(16,185,129,0.08);color:#10b981;border:1px solid rgba(16,185,129,0.15); }
+        .badge-err { display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(244,63,94,0.08);color:#f43f5e;border:1px solid rgba(244,63,94,0.15); }
+
+        /* Table */
+        .data-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+        .data-table th { padding: 9px 14px; color: #4a5a7a; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid #1a2235; text-align: left; }
+        .data-table td { padding: 11px 14px; border-bottom: 1px solid #111827; }
+        .data-table tr:hover td { background: #0f1520; }
+        .data-table tr:last-child td { border-bottom: none; }
+
+        /* Code block */
+        .code-block {
+            background: #060a10;
+            border: 1px solid #1a2235;
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            color: #8b9cc4;
+            overflow-x: auto;
+            position: relative;
+        }
+        .code-block .kw { color: #818cf8; }
+        .code-block .str { color: #86efac; }
+        .code-block .key { color: #7dd3fc; }
+        .code-block .cm { color: #374161; font-style: italic; }
+
+        /* Toast */
+        .toast { background: #0d1117; border: 1px solid #1a2235; border-radius: 9px; padding: 12px 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); display: flex; align-items: flex-start; gap: 10px; min-width: 280px; }
+
+        /* Login */
+        .login-card { background: #0d1117; border: 1px solid #1a2235; border-radius: 14px; padding: 40px; max-width: 380px; width: 100%; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #1e2843; border-radius: 4px; }
+
+        /* Main content offset */
+        .main-content { margin-left: 220px; padding: 28px 32px; min-height: 100vh; }
+
+        /* Label */
+        .label { display: block; font-size: 11.5px; font-weight: 500; color: #4a5a7a; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+
+        /* Key badge */
+        .key-chip { background: #060a10; border: 1px solid #1a2235; border-radius: 6px; padding: 6px 10px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: #6b7a99; display: flex; align-items: center; gap: 8px; }
+
+        /* Divider */
+        .divider { border: none; border-top: 1px solid #1a2235; margin: 0; }
+
+        /* Section title */
+        .section-title { font-size: 13px; font-weight: 600; color: #8b9cc4; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 16px; }
+
+        /* Language selector */
+        .lang-selector {
+            background: #080c14;
+            border: 1px solid #1a2235;
+            border-radius: 7px;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: #c9d1e0;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .lang-selector:hover { border-color: #2a3a5c; }
+        .lang-selector:focus { border-color: #4f46e5; }
+
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; min-height: auto; position: relative; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #1a2235; }
+            .main-content { margin-left: 0; padding: 20px 16px; }
+        }
+    </style>
+</head>
+<body x-data="app()">
+
+<!-- ── TOASTS ── -->
+<div class="fixed top-4 right-4 z-50 space-y-2" style="z-index:9999">
+    <template x-for="toast in toasts" :key="toast.id">
+        <div x-show="toast.show" x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 translate-x-4" x-transition:enter-end="opacity-100 translate-x-0"
+             x-transition:leave="transition ease-in duration-150" x-transition:leave-end="opacity-0 translate-x-4"
+             class="toast">
+            <div class="mt-0.5 flex-shrink-0">
+        <span x-show="toast.type==='success'" class="text-emerald-400">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+        </span>
+                <span x-show="toast.type==='error'" class="text-rose-400">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+        </span>
+                <span x-show="toast.type==='info'" class="text-indigo-400">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </span>
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-200" x-text="toast.title"></p>
+                <p class="text-xs text-gray-500 mt-0.5" x-text="toast.message"></p>
+            </div>
+            <button @click="removeToast(toast.id)" class="text-gray-600 hover:text-gray-400 flex-shrink-0">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+    </template>
+</div>
+
+<!-- ── LOGIN ── -->
+<div x-show="!loaded" x-cloak class="min-h-screen flex items-center justify-center p-6">
+    <div class="login-card">
+        <div class="mb-8">
+            <div class="flex items-center gap-3 mb-6">
+                <div  class="w-9 h-9 rounded-lg flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 93.54 106.29"><defs><style>.cls-1{fill:#a7ef9e;}.cls-2{fill:#0f1514;}</style></defs><g id="Calque_2" data-name="Calque 2"><g id="Calque_2-2" data-name="Calque 2"><polygon class="cls-1" points="93.54 65.67 93.54 87.16 91.41 87.16 91.41 89.29 87.16 89.29 87.16 91.41 82.91 91.41 82.91 93.54 78.66 93.54 78.66 95.67 74.41 95.67 74.41 97.79 70.16 97.79 70.16 99.92 65.9 99.92 65.9 102.04 61.65 102.04 61.65 104.17 57.4 104.17 57.4 106.3 48.42 106.3 48.42 104.17 44.17 104.17 44.17 102.04 39.92 102.04 39.92 99.92 35.67 99.92 35.67 97.79 31.42 97.79 31.42 95.67 27.16 95.67 27.16 93.54 22.91 93.54 22.91 91.41 18.66 91.41 18.66 89.29 14.41 89.29 14.41 87.16 10.16 87.16 10.16 85.04 5.91 85.04 5.91 82.91 2.13 82.91 2.13 80.78 0 80.78 0 61.18 2.36 61.18 2.36 59.05 6.38 59.05 6.38 55.27 4.25 55.27 4.25 8.5 6.38 8.5 6.38 6.38 10.63 6.38 10.63 4.25 17.01 4.25 17.01 2.13 23.39 2.13 23.39 0 42.75 0 42.75 2.13 64.01 2.13 64.01 4.25 70.16 4.25 70.16 6.38 74.41 6.38 74.41 8.5 78.66 8.5 78.66 10.63 82.91 10.63 82.91 12.76 87.16 12.76 87.16 14.88 89.29 14.88 89.29 17.01 91.41 17.01 91.41 38.5 89.29 38.5 89.29 40.63 87.16 40.63 87.16 55.51 85.04 55.51 85.04 57.63 80.78 57.63 80.78 59.29 85.04 59.29 85.04 61.41 89.29 61.41 89.29 63.54 91.41 63.54 91.41 65.43 89.29 65.43 89.29 65.67 93.54 65.67"/><rect class="cls-2" x="25.75" y="2.36" width="14.65" height="2.13"/><rect class="cls-2" x="19.37" y="4.49" width="6.38" height="2.13"/><rect class="cls-2" x="12.99" y="6.61" width="6.38" height="2.13"/><rect class="cls-2" x="8.74" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="25.75" y="6.61" width="4.25" height="2.13"/><rect class="cls-2" x="30" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="34.25" y="10.87" width="4.25" height="2.13"/><rect class="cls-2" x="38.5" y="12.99" width="4.25" height="2.13"/><rect class="cls-2" x="42.75" y="15.12" width="4.25" height="2.13"/><rect class="cls-2" x="47.01" y="17.24" width="4.25" height="2.13"/><rect class="cls-2" x="51.26" y="19.37" width="4.25" height="2.13"/><rect class="cls-2" x="55.51" y="21.5" width="4.25" height="2.13"/><rect class="cls-2" x="59.76" y="23.62" width="2.13" height="2.13"/><rect class="cls-2" x="40.39" y="4.49" width="21.26" height="2.13"/><rect class="cls-2" x="61.65" y="6.61" width="6.14" height="2.13"/><rect class="cls-2" x="67.79" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="72.04" y="10.87" width="4.25" height="2.13"/><rect class="cls-2" x="76.3" y="12.99" width="4.25" height="2.13"/><rect class="cls-2" x="80.55" y="15.12" width="4.25" height="2.13"/><rect class="cls-2" x="84.8" y="17.24" width="2.13" height="2.13"/><rect class="cls-2" x="61.89" y="25.75" width="2.13" height="44.17"/><rect class="cls-2" x="57.64" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="53.38" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="49.13" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="44.88" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="65.67" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="12.99" y="57.16" width="6.38" height="2.13"/><rect class="cls-2" x="10.87" y="55.04" width="4.25" height="2.13"/><rect class="cls-2" x="8.74" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="4.49" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="8.74" y="52.91" width="2.13" height="2.13"/><rect class="cls-2" x="6.61" y="10.87" width="2.13" height="42.05"/><rect class="cls-2" x="15.12" y="21.5" width="2.13" height="29.29"/><rect class="cls-2" x="15.12" y="21.5" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="23.62" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="25.75" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="27.87" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="30" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="32.12" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="34.25" width="4.25" height="2.13"/><rect class="cls-2" x="42.75" y="34.25" width="2.13" height="29.29"/><rect class="cls-2" x="40.63" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="57.16" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="55.04" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="52.91" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="50.79" width="4.25" height="2.13"/><rect class="cls-2" x="15.12" y="48.66" width="4.25" height="2.13"/><rect class="cls-2" x="86.93" y="19.37" width="2.13" height="16.77"/><rect class="cls-2" x="84.8" y="36.14" width="2.13" height="2.13"/><rect class="cls-2" x="82.67" y="38.27" width="2.13" height="14.88"/><rect class="cls-2" x="80.55" y="40.39" width="2.13" height="2.13"/><rect class="cls-2" x="78.42" y="42.52" width="2.13" height="2.13"/><rect class="cls-2" x="76.3" y="44.64" width="2.13" height="2.13"/><rect class="cls-2" x="74.17" y="46.77" width="2.13" height="2.13"/><rect class="cls-2" x="72.04" y="48.9" width="2.13" height="2.13"/><rect class="cls-2" x="69.92" y="51.02" width="2.13" height="2.13"/><rect class="cls-2" x="67.79" y="53.15" width="2.13" height="2.13"/><rect class="cls-2" x="65.67" y="55.27" width="2.13" height="2.13"/><rect class="cls-2" x="63.54" y="57.4" width="2.13" height="2.13"/><rect class="cls-2" x="63.54" y="61.65" width="2.13" height="2.13"/><rect class="cls-2" x="65.67" y="59.53" width="4.25" height="2.13"/><rect class="cls-2" x="69.92" y="57.4" width="4.25" height="2.13"/><rect class="cls-2" x="74.17" y="55.27" width="4.25" height="2.13"/><rect class="cls-2" x="78.42" y="53.15" width="4.25" height="2.13"/><rect class="cls-2" x="74.17" y="59.53" width="4.25" height="2.13"/><rect class="cls-2" x="78.42" y="61.65" width="4.25" height="2.13"/><rect class="cls-2" x="82.67" y="63.78" width="4.25" height="2.13"/><rect class="cls-2" x="86.93" y="65.9" width="2.13" height="2.13"/><rect class="cls-2" x="84.8" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="89.05" y="68.03" width="2.13" height="16.77"/><rect class="cls-2" x="80.55" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="76.3" y="89.05" width="4.25" height="2.13"/><rect class="cls-2" x="72.04" y="91.18" width="4.25" height="2.13"/><rect class="cls-2" x="67.79" y="93.3" width="4.25" height="2.13"/><rect class="cls-2" x="63.54" y="95.43" width="4.25" height="2.13"/><rect class="cls-2" x="59.29" y="97.55" width="4.25" height="2.13"/><rect class="cls-2" x="55.04" y="99.68" width="4.25" height="2.13"/><rect class="cls-2" x="50.79" y="101.81" width="4.25" height="2.13"/><rect class="cls-2" x="46.53" y="99.68" width="4.25" height="2.13"/><rect class="cls-2" x="42.28" y="97.55" width="4.25" height="2.13"/><rect class="cls-2" x="38.03" y="95.43" width="4.25" height="2.13"/><rect class="cls-2" x="33.78" y="93.3" width="4.25" height="2.13"/><rect class="cls-2" x="29.53" y="91.18" width="4.25" height="2.13"/><rect class="cls-2" x="25.27" y="89.05" width="4.25" height="2.13"/><rect class="cls-2" x="21.02" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="16.77" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="12.52" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="8.27" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="4.49" y="78.42" width="3.78" height="2.13"/><rect class="cls-2" x="2.36" y="63.54" width="2.13" height="14.88"/><rect class="cls-2" x="8.74" y="70.15" width="4.25" height="2.13"/><rect class="cls-2" x="10.87" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="12.05" y="73.23" width="4.02" height="2.13" transform="translate(88.34 60.23) rotate(90)"/><rect class="cls-2" x="7.79" y="71.1" width="4.02" height="2.13" transform="translate(81.97 62.36) rotate(90)"/><rect class="cls-1" x="10.87" y="72.28" width="2.13" height="1.89"/><rect class="cls-2" x="27.87" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="22.68" y="33.31" width="4.02" height="4.02"/><rect class="cls-2" x="33.78" y="38.27" width="4.02" height="4.02"/><rect class="cls-2" x="19.84" y="40.16" width="1.89" height="5.91"/><rect class="cls-2" x="28.11" y="43.7" width="1.89" height="4.25"/><rect class="cls-2" x="38.5" y="47.48" width="1.89" height="4.25"/><rect class="cls-2" x="35.43" y="50.55" width="1.89" height="4.25" transform="translate(-16.3 89.05) rotate(-90)"/><rect class="cls-2" x="25.04" y="46.77" width="1.89" height="4.25" transform="translate(-22.91 74.88) rotate(-90)"/><rect class="cls-2" x="30.12" y="47.83" width="1.89" height="2.13" transform="translate(-17.83 79.96) rotate(-90)"/><rect class="cls-2" x="32.24" y="49.72" width="1.89" height="2.13" transform="translate(-17.6 83.97) rotate(-90)"/><rect class="cls-2" x="21.85" y="45.94" width="1.89" height="2.13" transform="translate(-24.21 69.8) rotate(-90)"/><rect class="cls-2" x="85.04" y="67.79" width="4.02" height="2.13"/><rect class="cls-2" x="80.78" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="76.53" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="72.28" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="68.03" y="76.3" width="4.25" height="2.13"/><rect class="cls-2" x="63.78" y="78.42" width="4.25" height="2.13"/><rect class="cls-2" x="59.53" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="55.27" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="51.02" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="46.77" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="42.52" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="38.27" y="78.42" width="4.25" height="2.13"/><rect class="cls-2" x="34.01" y="76.3" width="4.25" height="2.13"/><rect class="cls-2" x="29.76" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="25.51" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="21.26" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="17.01" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="12.76" y="65.67" width="4.25" height="2.13"/><rect class="cls-2" x="8.5" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="4.72" y="61.41" width="3.78" height="2.13"/><rect class="cls-2" x="36.61" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="40.86" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="69.16" y="30.67" width="0.93" height="0.93" transform="matrix(0.95, -0.3, 0.3, 0.95, -6.18, 22.69)"/><rect class="cls-2" x="68.56" y="31.84" width="0.93" height="0.93" transform="translate(-6.56 22.56) rotate(-17.73)"/><rect class="cls-2" x="67.96" y="33.01" width="0.93" height="0.93" transform="matrix(0.95, -0.3, 0.3, 0.95, -6.95, 22.43)"/><rect class="cls-2" x="67.35" y="34.18" width="0.93" height="0.93" transform="translate(-7.33 22.3) rotate(-17.73)"/><rect class="cls-2" x="68.52" y="34.78" width="0.93" height="0.93" transform="translate(-7.46 22.69) rotate(-17.73)"/><rect class="cls-2" x="69.69" y="35.39" width="0.93" height="0.93" transform="translate(-7.59 23.07) rotate(-17.73)"/><rect class="cls-2" x="70.86" y="35.99" width="0.93" height="0.93" transform="translate(-7.71 23.46) rotate(-17.73)"/><rect class="cls-2" x="73.37" y="35.69" width="0.93" height="0.93" transform="translate(-8.28 40.12) rotate(-28.86)"/><rect class="cls-2" x="73" y="36.95" width="0.93" height="0.93" transform="translate(-8.94 40.1) rotate(-28.86)"/><rect class="cls-2" x="72.64" y="38.22" width="0.93" height="0.93" transform="translate(-9.59 40.08) rotate(-28.86)"/><rect class="cls-2" x="74.83" y="30.65" width="0.93" height="0.93" transform="translate(-5.67 40.2) rotate(-28.86)"/><rect class="cls-2" x="74.47" y="31.91" width="0.93" height="0.93" transform="translate(-6.32 40.18) rotate(-28.86)"/><rect class="cls-2" x="74.1" y="33.18" width="0.93" height="0.93" transform="translate(-6.98 40.16) rotate(-28.86)"/><rect class="cls-2" x="73.74" y="34.44" width="0.93" height="0.93" transform="translate(-7.63 40.14) rotate(-28.86)"/><rect class="cls-2" x="76.3" y="25.59" width="0.93" height="0.93" transform="translate(-3.05 40.28) rotate(-28.86)"/><rect class="cls-2" x="75.93" y="26.86" width="0.93" height="0.93" transform="translate(-3.7 40.26) rotate(-28.86)"/><rect class="cls-2" x="75.57" y="28.12" width="0.93" height="0.93" transform="translate(-4.36 40.24) rotate(-28.86)"/><rect class="cls-2" x="75.2" y="29.38" width="0.93" height="0.93" transform="translate(-5.01 40.22) rotate(-28.86)"/><rect class="cls-2" x="78.08" y="27.82" width="0.93" height="0.93" transform="translate(-4.88 25.27) rotate(-17.73)"/><rect class="cls-2" x="79.25" y="28.43" width="0.93" height="0.93" transform="translate(-5.01 25.65) rotate(-17.73)"/><rect class="cls-2" x="80.41" y="29.03" width="0.93" height="0.93" transform="translate(-5.14 26.03) rotate(-17.73)"/><rect class="cls-2" x="81.58" y="29.63" width="0.93" height="0.93" transform="translate(-5.27 26.42) rotate(-17.73)"/><rect class="cls-2" x="80.98" y="30.8" width="0.93" height="0.93" transform="translate(-5.65 26.29) rotate(-17.73)"/><rect class="cls-2" x="80.38" y="31.97" width="0.93" height="0.93" transform="translate(-6.04 26.16) rotate(-17.73)"/><rect class="cls-2" x="79.78" y="33.14" width="0.93" height="0.93" transform="translate(-6.42 26.04) rotate(-17.73)"/><path class="cls-2" d="M53.55,95.81V90.56h1.5v2.25H57.3V90.56h1.5v5.25H57.3V93.56H55.05v2.25Z"/><path class="cls-2" d="M59.64,91.92V86.67h5.25v.75H61.14v1.5h3v.75h-3v1.5h3.75v.75Z"/><path class="cls-2" d="M65.52,89.34V84.09H70v.75h.75v2.25h-1.5v.75H70v.75h.75v.75H68.52v-.75h-.75v-.75H67v1.5ZM67,87.09h1.5v-.75h.75v-1.5H67Z"/><path class="cls-2" d="M72.82,86.21v-.75h-.75v-.75h-.75V82.46h.75v-.75h.75V81h3.75v.75h-3v.75h-.75v2.25h.75v.75h1.5V84h-.75v-.75h2.25v3Z"/><path class="cls-2" d="M78.26,83.38v-.75h-.75V78.88h.75v-.75H82v.75h.75v3.75H82v.75Zm.75-.75h2.25V78.88H79Z"/><path class="cls-2" d="M83.52,80.31V75.06H85v4.5h3v.75Z"/></g></g></svg>
+                 </div>
+                <span class="font-semibold text-gray-200 text-sm tracking-tight">FormTo</span>
+            </div>
+            <h1 class="text-xl font-semibold text-white mb-1" x-text="t('login.title')">Connexion</h1>
+            <p class="text-sm text-gray-500" x-text="t('login.subtitle')">Send email directly from your code</p>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="label" x-text="t('login.password_label')">Mot de passe admin</label>
+                <input type="password" x-model="adminPassword" @keydown.enter="loadData()" :placeholder="t('login.password_placeholder')" class="input">
+            </div>
+            <button @click="loadData()" class="btn btn-primary w-full justify-center py-2.5">
+                <span x-text="t('login.submit_button')">Accéder au tableau de bord</span>
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ── APP ── -->
+<div x-show="loaded" x-cloak class="flex">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="p-5 border-b border-gray-800/60">
+            <div class="flex items-center gap-2.5">
+                <div class="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 93.54 106.29"><defs><style>.cls-1{fill:#a7ef9e;}.cls-2{fill:#0f1514;}</style></defs><g id="Calque_2" data-name="Calque 2"><g id="Calque_2-2" data-name="Calque 2"><polygon class="cls-1" points="93.54 65.67 93.54 87.16 91.41 87.16 91.41 89.29 87.16 89.29 87.16 91.41 82.91 91.41 82.91 93.54 78.66 93.54 78.66 95.67 74.41 95.67 74.41 97.79 70.16 97.79 70.16 99.92 65.9 99.92 65.9 102.04 61.65 102.04 61.65 104.17 57.4 104.17 57.4 106.3 48.42 106.3 48.42 104.17 44.17 104.17 44.17 102.04 39.92 102.04 39.92 99.92 35.67 99.92 35.67 97.79 31.42 97.79 31.42 95.67 27.16 95.67 27.16 93.54 22.91 93.54 22.91 91.41 18.66 91.41 18.66 89.29 14.41 89.29 14.41 87.16 10.16 87.16 10.16 85.04 5.91 85.04 5.91 82.91 2.13 82.91 2.13 80.78 0 80.78 0 61.18 2.36 61.18 2.36 59.05 6.38 59.05 6.38 55.27 4.25 55.27 4.25 8.5 6.38 8.5 6.38 6.38 10.63 6.38 10.63 4.25 17.01 4.25 17.01 2.13 23.39 2.13 23.39 0 42.75 0 42.75 2.13 64.01 2.13 64.01 4.25 70.16 4.25 70.16 6.38 74.41 6.38 74.41 8.5 78.66 8.5 78.66 10.63 82.91 10.63 82.91 12.76 87.16 12.76 87.16 14.88 89.29 14.88 89.29 17.01 91.41 17.01 91.41 38.5 89.29 38.5 89.29 40.63 87.16 40.63 87.16 55.51 85.04 55.51 85.04 57.63 80.78 57.63 80.78 59.29 85.04 59.29 85.04 61.41 89.29 61.41 89.29 63.54 91.41 63.54 91.41 65.43 89.29 65.43 89.29 65.67 93.54 65.67"/><rect class="cls-2" x="25.75" y="2.36" width="14.65" height="2.13"/><rect class="cls-2" x="19.37" y="4.49" width="6.38" height="2.13"/><rect class="cls-2" x="12.99" y="6.61" width="6.38" height="2.13"/><rect class="cls-2" x="8.74" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="25.75" y="6.61" width="4.25" height="2.13"/><rect class="cls-2" x="30" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="34.25" y="10.87" width="4.25" height="2.13"/><rect class="cls-2" x="38.5" y="12.99" width="4.25" height="2.13"/><rect class="cls-2" x="42.75" y="15.12" width="4.25" height="2.13"/><rect class="cls-2" x="47.01" y="17.24" width="4.25" height="2.13"/><rect class="cls-2" x="51.26" y="19.37" width="4.25" height="2.13"/><rect class="cls-2" x="55.51" y="21.5" width="4.25" height="2.13"/><rect class="cls-2" x="59.76" y="23.62" width="2.13" height="2.13"/><rect class="cls-2" x="40.39" y="4.49" width="21.26" height="2.13"/><rect class="cls-2" x="61.65" y="6.61" width="6.14" height="2.13"/><rect class="cls-2" x="67.79" y="8.74" width="4.25" height="2.13"/><rect class="cls-2" x="72.04" y="10.87" width="4.25" height="2.13"/><rect class="cls-2" x="76.3" y="12.99" width="4.25" height="2.13"/><rect class="cls-2" x="80.55" y="15.12" width="4.25" height="2.13"/><rect class="cls-2" x="84.8" y="17.24" width="2.13" height="2.13"/><rect class="cls-2" x="61.89" y="25.75" width="2.13" height="44.17"/><rect class="cls-2" x="57.64" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="53.38" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="49.13" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="44.88" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="65.67" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="12.99" y="57.16" width="6.38" height="2.13"/><rect class="cls-2" x="10.87" y="55.04" width="4.25" height="2.13"/><rect class="cls-2" x="8.74" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="4.49" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="8.74" y="52.91" width="2.13" height="2.13"/><rect class="cls-2" x="6.61" y="10.87" width="2.13" height="42.05"/><rect class="cls-2" x="15.12" y="21.5" width="2.13" height="29.29"/><rect class="cls-2" x="15.12" y="21.5" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="23.62" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="25.75" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="27.87" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="30" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="32.12" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="34.25" width="4.25" height="2.13"/><rect class="cls-2" x="42.75" y="34.25" width="2.13" height="29.29"/><rect class="cls-2" x="40.63" y="61.41" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="59.29" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="57.16" width="4.25" height="2.13"/><rect class="cls-2" x="27.87" y="55.04" width="4.25" height="2.13"/><rect class="cls-2" x="23.62" y="52.91" width="4.25" height="2.13"/><rect class="cls-2" x="19.37" y="50.79" width="4.25" height="2.13"/><rect class="cls-2" x="15.12" y="48.66" width="4.25" height="2.13"/><rect class="cls-2" x="86.93" y="19.37" width="2.13" height="16.77"/><rect class="cls-2" x="84.8" y="36.14" width="2.13" height="2.13"/><rect class="cls-2" x="82.67" y="38.27" width="2.13" height="14.88"/><rect class="cls-2" x="80.55" y="40.39" width="2.13" height="2.13"/><rect class="cls-2" x="78.42" y="42.52" width="2.13" height="2.13"/><rect class="cls-2" x="76.3" y="44.64" width="2.13" height="2.13"/><rect class="cls-2" x="74.17" y="46.77" width="2.13" height="2.13"/><rect class="cls-2" x="72.04" y="48.9" width="2.13" height="2.13"/><rect class="cls-2" x="69.92" y="51.02" width="2.13" height="2.13"/><rect class="cls-2" x="67.79" y="53.15" width="2.13" height="2.13"/><rect class="cls-2" x="65.67" y="55.27" width="2.13" height="2.13"/><rect class="cls-2" x="63.54" y="57.4" width="2.13" height="2.13"/><rect class="cls-2" x="63.54" y="61.65" width="2.13" height="2.13"/><rect class="cls-2" x="65.67" y="59.53" width="4.25" height="2.13"/><rect class="cls-2" x="69.92" y="57.4" width="4.25" height="2.13"/><rect class="cls-2" x="74.17" y="55.27" width="4.25" height="2.13"/><rect class="cls-2" x="78.42" y="53.15" width="4.25" height="2.13"/><rect class="cls-2" x="74.17" y="59.53" width="4.25" height="2.13"/><rect class="cls-2" x="78.42" y="61.65" width="4.25" height="2.13"/><rect class="cls-2" x="82.67" y="63.78" width="4.25" height="2.13"/><rect class="cls-2" x="86.93" y="65.9" width="2.13" height="2.13"/><rect class="cls-2" x="84.8" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="89.05" y="68.03" width="2.13" height="16.77"/><rect class="cls-2" x="80.55" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="76.3" y="89.05" width="4.25" height="2.13"/><rect class="cls-2" x="72.04" y="91.18" width="4.25" height="2.13"/><rect class="cls-2" x="67.79" y="93.3" width="4.25" height="2.13"/><rect class="cls-2" x="63.54" y="95.43" width="4.25" height="2.13"/><rect class="cls-2" x="59.29" y="97.55" width="4.25" height="2.13"/><rect class="cls-2" x="55.04" y="99.68" width="4.25" height="2.13"/><rect class="cls-2" x="50.79" y="101.81" width="4.25" height="2.13"/><rect class="cls-2" x="46.53" y="99.68" width="4.25" height="2.13"/><rect class="cls-2" x="42.28" y="97.55" width="4.25" height="2.13"/><rect class="cls-2" x="38.03" y="95.43" width="4.25" height="2.13"/><rect class="cls-2" x="33.78" y="93.3" width="4.25" height="2.13"/><rect class="cls-2" x="29.53" y="91.18" width="4.25" height="2.13"/><rect class="cls-2" x="25.27" y="89.05" width="4.25" height="2.13"/><rect class="cls-2" x="21.02" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="16.77" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="12.52" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="8.27" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="4.49" y="78.42" width="3.78" height="2.13"/><rect class="cls-2" x="2.36" y="63.54" width="2.13" height="14.88"/><rect class="cls-2" x="8.74" y="70.15" width="4.25" height="2.13"/><rect class="cls-2" x="10.87" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="12.05" y="73.23" width="4.02" height="2.13" transform="translate(88.34 60.23) rotate(90)"/><rect class="cls-2" x="7.79" y="71.1" width="4.02" height="2.13" transform="translate(81.97 62.36) rotate(90)"/><rect class="cls-1" x="10.87" y="72.28" width="2.13" height="1.89"/><rect class="cls-2" x="27.87" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="32.12" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="36.38" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="40.63" y="86.93" width="4.25" height="2.13"/><rect class="cls-2" x="22.68" y="33.31" width="4.02" height="4.02"/><rect class="cls-2" x="33.78" y="38.27" width="4.02" height="4.02"/><rect class="cls-2" x="19.84" y="40.16" width="1.89" height="5.91"/><rect class="cls-2" x="28.11" y="43.7" width="1.89" height="4.25"/><rect class="cls-2" x="38.5" y="47.48" width="1.89" height="4.25"/><rect class="cls-2" x="35.43" y="50.55" width="1.89" height="4.25" transform="translate(-16.3 89.05) rotate(-90)"/><rect class="cls-2" x="25.04" y="46.77" width="1.89" height="4.25" transform="translate(-22.91 74.88) rotate(-90)"/><rect class="cls-2" x="30.12" y="47.83" width="1.89" height="2.13" transform="translate(-17.83 79.96) rotate(-90)"/><rect class="cls-2" x="32.24" y="49.72" width="1.89" height="2.13" transform="translate(-17.6 83.97) rotate(-90)"/><rect class="cls-2" x="21.85" y="45.94" width="1.89" height="2.13" transform="translate(-24.21 69.8) rotate(-90)"/><rect class="cls-2" x="85.04" y="67.79" width="4.02" height="2.13"/><rect class="cls-2" x="80.78" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="76.53" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="72.28" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="68.03" y="76.3" width="4.25" height="2.13"/><rect class="cls-2" x="63.78" y="78.42" width="4.25" height="2.13"/><rect class="cls-2" x="59.53" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="55.27" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="51.02" y="84.8" width="4.25" height="2.13"/><rect class="cls-2" x="46.77" y="82.67" width="4.25" height="2.13"/><rect class="cls-2" x="42.52" y="80.55" width="4.25" height="2.13"/><rect class="cls-2" x="38.27" y="78.42" width="4.25" height="2.13"/><rect class="cls-2" x="34.01" y="76.3" width="4.25" height="2.13"/><rect class="cls-2" x="29.76" y="74.17" width="4.25" height="2.13"/><rect class="cls-2" x="25.51" y="72.04" width="4.25" height="2.13"/><rect class="cls-2" x="21.26" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="17.01" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="12.76" y="65.67" width="4.25" height="2.13"/><rect class="cls-2" x="8.5" y="63.54" width="4.25" height="2.13"/><rect class="cls-2" x="4.72" y="61.41" width="3.78" height="2.13"/><rect class="cls-2" x="36.61" y="67.79" width="4.25" height="2.13"/><rect class="cls-2" x="40.86" y="69.92" width="4.25" height="2.13"/><rect class="cls-2" x="69.16" y="30.67" width="0.93" height="0.93" transform="matrix(0.95, -0.3, 0.3, 0.95, -6.18, 22.69)"/><rect class="cls-2" x="68.56" y="31.84" width="0.93" height="0.93" transform="translate(-6.56 22.56) rotate(-17.73)"/><rect class="cls-2" x="67.96" y="33.01" width="0.93" height="0.93" transform="matrix(0.95, -0.3, 0.3, 0.95, -6.95, 22.43)"/><rect class="cls-2" x="67.35" y="34.18" width="0.93" height="0.93" transform="translate(-7.33 22.3) rotate(-17.73)"/><rect class="cls-2" x="68.52" y="34.78" width="0.93" height="0.93" transform="translate(-7.46 22.69) rotate(-17.73)"/><rect class="cls-2" x="69.69" y="35.39" width="0.93" height="0.93" transform="translate(-7.59 23.07) rotate(-17.73)"/><rect class="cls-2" x="70.86" y="35.99" width="0.93" height="0.93" transform="translate(-7.71 23.46) rotate(-17.73)"/><rect class="cls-2" x="73.37" y="35.69" width="0.93" height="0.93" transform="translate(-8.28 40.12) rotate(-28.86)"/><rect class="cls-2" x="73" y="36.95" width="0.93" height="0.93" transform="translate(-8.94 40.1) rotate(-28.86)"/><rect class="cls-2" x="72.64" y="38.22" width="0.93" height="0.93" transform="translate(-9.59 40.08) rotate(-28.86)"/><rect class="cls-2" x="74.83" y="30.65" width="0.93" height="0.93" transform="translate(-5.67 40.2) rotate(-28.86)"/><rect class="cls-2" x="74.47" y="31.91" width="0.93" height="0.93" transform="translate(-6.32 40.18) rotate(-28.86)"/><rect class="cls-2" x="74.1" y="33.18" width="0.93" height="0.93" transform="translate(-6.98 40.16) rotate(-28.86)"/><rect class="cls-2" x="73.74" y="34.44" width="0.93" height="0.93" transform="translate(-7.63 40.14) rotate(-28.86)"/><rect class="cls-2" x="76.3" y="25.59" width="0.93" height="0.93" transform="translate(-3.05 40.28) rotate(-28.86)"/><rect class="cls-2" x="75.93" y="26.86" width="0.93" height="0.93" transform="translate(-3.7 40.26) rotate(-28.86)"/><rect class="cls-2" x="75.57" y="28.12" width="0.93" height="0.93" transform="translate(-4.36 40.24) rotate(-28.86)"/><rect class="cls-2" x="75.2" y="29.38" width="0.93" height="0.93" transform="translate(-5.01 40.22) rotate(-28.86)"/><rect class="cls-2" x="78.08" y="27.82" width="0.93" height="0.93" transform="translate(-4.88 25.27) rotate(-17.73)"/><rect class="cls-2" x="79.25" y="28.43" width="0.93" height="0.93" transform="translate(-5.01 25.65) rotate(-17.73)"/><rect class="cls-2" x="80.41" y="29.03" width="0.93" height="0.93" transform="translate(-5.14 26.03) rotate(-17.73)"/><rect class="cls-2" x="81.58" y="29.63" width="0.93" height="0.93" transform="translate(-5.27 26.42) rotate(-17.73)"/><rect class="cls-2" x="80.98" y="30.8" width="0.93" height="0.93" transform="translate(-5.65 26.29) rotate(-17.73)"/><rect class="cls-2" x="80.38" y="31.97" width="0.93" height="0.93" transform="translate(-6.04 26.16) rotate(-17.73)"/><rect class="cls-2" x="79.78" y="33.14" width="0.93" height="0.93" transform="translate(-6.42 26.04) rotate(-17.73)"/><path class="cls-2" d="M53.55,95.81V90.56h1.5v2.25H57.3V90.56h1.5v5.25H57.3V93.56H55.05v2.25Z"/><path class="cls-2" d="M59.64,91.92V86.67h5.25v.75H61.14v1.5h3v.75h-3v1.5h3.75v.75Z"/><path class="cls-2" d="M65.52,89.34V84.09H70v.75h.75v2.25h-1.5v.75H70v.75h.75v.75H68.52v-.75h-.75v-.75H67v1.5ZM67,87.09h1.5v-.75h.75v-1.5H67Z"/><path class="cls-2" d="M72.82,86.21v-.75h-.75v-.75h-.75V82.46h.75v-.75h.75V81h3.75v.75h-3v.75h-.75v2.25h.75v.75h1.5V84h-.75v-.75h2.25v3Z"/><path class="cls-2" d="M78.26,83.38v-.75h-.75V78.88h.75v-.75H82v.75h.75v3.75H82v.75Zm.75-.75h2.25V78.88H79Z"/><path class="cls-2" d="M83.52,80.31V75.06H85v4.5h3v.75Z"/></g></g></svg>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold text-gray-200 leading-tight">FormTo</div>
+                    <div class="text-xs text-gray-600 mono">v1.0</div>
+                </div>
+            </div>
+        </div>
+
+        <nav class="flex-1 py-4">
+            <div class="px-4 mb-2">
+                <span class="text-xs font-semibold text-gray-700 uppercase tracking-widest" x-text="t('sidebar.navigation')">Navigation</span>
+            </div>
+            <a @click="activeTab='dashboard'" :class="activeTab==='dashboard' ? 'active' : ''" class="nav-item">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm10-3a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z"/></svg>
+                <span x-text="t('sidebar.dashboard')">Tableau de bord</span>
+            </a>
+            <a @click="activeTab='logs'" :class="activeTab==='logs' ? 'active' : ''" class="nav-item">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                <span x-text="t('sidebar.logs')">Historique</span>
+            </a>
+            <a @click="activeTab='config'" :class="activeTab==='config' ? 'active' : ''" class="nav-item">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                <span x-text="t('sidebar.config')">Configuration</span>
+            </a>
+            <a @click="activeTab='docs'" :class="activeTab==='docs' ? 'active' : ''" class="nav-item">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                <span x-text="t('sidebar.docs')">Documentation API</span>
+            </a>
+        </nav>
+
+        <!-- Language Selector -->
+        <div class="p-4 border-t border-gray-800/60">
+            <div class="mb-3">
+                <label class="text-xs font-semibold text-gray-700 uppercase tracking-widest mb-2 block" x-text="t('sidebar.language')">Langue</label>
+                <select x-model="currentLang" @change="changeLanguage($event.target.value)" class="lang-selector w-full">
+                    <template x-for="lang in availableLanguages" :key="lang.code">
+                        <option :value="lang.code" x-text="lang.name"></option>
+                    </template>
+                </select>
+            </div>
+            <button @click="logout()" class="btn btn-secondary w-full justify-center text-xs py-2">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                <span x-text="t('sidebar.logout')">Déconnexion</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main-content flex-1">
+
+        <!-- ── DASHBOARD ── -->
+        <div x-show="activeTab==='dashboard'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+            <div class="mb-6 flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-white" x-text="t('dashboard.title')">Tableau de bord</h2>
+                    <p class="text-xs text-gray-600 mt-0.5" x-text="t('dashboard.subtitle')">Vue d'ensemble des envois en temps réel.</p>
+                </div>
+                <button @click="loadStats()" class="btn btn-secondary text-xs">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    <span x-text="t('dashboard.refresh')">Actualiser</span>
+                </button>
+            </div>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div class="stat-card">
+                    <div class="text-xs text-gray-600 font-medium uppercase tracking-wide mb-3" x-text="t('dashboard.stats.total')">Total</div>
+                    <div class="text-3xl font-bold text-white mono" x-text="stats.total ?? 0"></div>
+                    <div class="text-xs text-gray-600 mt-1" x-text="t('dashboard.stats.total_desc')">envois traités</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-xs text-gray-600 font-medium uppercase tracking-wide mb-3" x-text="t('dashboard.stats.success')">Succès</div>
+                    <div class="text-3xl font-bold text-emerald-400 mono" x-text="stats.success ?? 0"></div>
+                    <div class="text-xs text-gray-600 mt-1" x-text="t('dashboard.stats.success_desc')">messages délivrés</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-xs text-gray-600 font-medium uppercase tracking-wide mb-3" x-text="t('dashboard.stats.errors')">Erreurs</div>
+                    <div class="text-3xl font-bold text-rose-400 mono" x-text="stats.errors ?? 0"></div>
+                    <div class="text-xs text-gray-600 mt-1" x-text="t('dashboard.stats.errors_desc')">échecs d'envoi</div>
+                </div>
+                <div class="stat-card">
+                    <div class="text-xs text-gray-600 font-medium uppercase tracking-wide mb-3" x-text="t('dashboard.stats.rate')">Taux</div>
+                    <div class="text-3xl font-bold text-indigo-400 mono"><span x-text="stats.rate ?? 0"></span><span class="text-lg">%</span></div>
+                    <div class="text-xs text-gray-600 mt-1" x-text="t('dashboard.stats.rate_desc')">de réussite</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="grid lg:grid-cols-2 gap-4 mb-4">
+                <div class="card p-5">
+                    <div class="section-title" x-text="t('dashboard.charts.hourly')">24 dernières heures</div>
+                    <div style="height:220px"><canvas id="hourlyChart"></canvas></div>
+                </div>
+                <div class="card p-5">
+                    <div class="section-title" x-text="t('dashboard.charts.daily')">7 derniers jours</div>
+                    <div style="height:220px"><canvas id="dailyChart"></canvas></div>
+                </div>
+            </div>
+
+            <!-- By tenant -->
+            <div class="card p-5">
+                <div class="section-title" x-text="t('dashboard.tenants.title')">Activité par projet</div>
+                <div x-show="stats.by_tenant && stats.by_tenant.length > 0" class="space-y-3">
+                    <template x-for="t in stats.by_tenant" :key="t.tenant_name">
+                        <div>
+                            <div class="flex justify-between items-center mb-1.5">
+                                <span class="text-sm font-medium text-gray-300" x-text="t.tenant_name || t('dashboard.tenants.unknown')">Inconnu</span>
+                                <span class="text-xs mono">
+                  <span class="text-emerald-400" x-text="t.success"></span>
+                  <span class="text-gray-700 mx-1">/</span>
+                  <span class="text-rose-400" x-text="t.error"></span>
+                </span>
+                            </div>
+                            <div class="h-1.5 rounded-full overflow-hidden flex" style="background:#111827">
+                                <div class="h-full rounded-full bg-emerald-500 transition-all" :style="`width:${(t.success/(t.success+t.error||1))*100}%`"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="!stats.by_tenant || stats.by_tenant.length===0" class="text-center text-gray-600 text-sm py-8" x-text="t('dashboard.tenants.empty')">
+                    Aucune activité enregistrée.
+                </div>
+            </div>
+        </div>
+
+        <!-- ── LOGS ── -->
+        <div x-show="activeTab==='logs'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+            <div class="mb-6 flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-white" x-text="t('logs.title')">Historique</h2>
+                    <p class="text-xs text-gray-600 mt-0.5" x-text="t('logs.subtitle')">Journal de tous les appels à l'API.</p>
+                </div>
+                <div class="flex gap-2">
+                    <select x-model="logFilter" @change="loadLogs()" class="input" style="width:auto;padding:7px 10px">
+                        <option value="" x-text="t('logs.filter.all')">Tous</option>
+                        <option value="success" x-text="t('logs.filter.success')">Succès</option>
+                        <option value="error" x-text="t('logs.filter.error')">Erreurs</option>
+                    </select>
+                    <button @click="loadLogs()" class="btn btn-secondary text-xs">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <span x-text="t('logs.refresh')">Rafraîchir</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="card overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="data-table">
+                        <thead>
+                        <tr>
+                            <th x-text="t('logs.table.date')">Date</th>
+                            <th x-text="t('logs.table.project')">Projet</th>
+                            <th x-text="t('logs.table.recipient')">Destinataire</th>
+                            <th x-text="t('logs.table.subject')">Sujet</th>
+                            <th>IP</th>
+                            <th style="text-align:center" x-text="t('logs.table.status')">Statut</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <template x-for="log in logs" :key="log.id">
+                            <tr class="cursor-pointer" @click="selectedLog = log">
+                                <td class="mono text-xs text-gray-500 whitespace-nowrap" x-text="formatDate(log.created_at)"></td>
+                                <td class="font-medium text-gray-300" x-text="log.tenant_name || '—'"></td>
+                                <td class="text-indigo-400 text-xs" x-text="log.recipient || '—'"></td>
+                                <td class="text-gray-400 max-w-xs truncate text-xs" x-text="log.subject || '—'"></td>
+                                <td class="mono text-xs text-gray-600" x-text="log.ip"></td>
+                                <td style="text-align:center">
+                                    <span x-show="log.status==='success'" class="badge-ok">OK</span>
+                                    <span x-show="log.status==='error'" class="badge-err" :title="log.error_msg" x-text="t('logs.status.error')">Erreur</span>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="logs.length===0">
+                            <td colspan="6" class="text-center text-gray-600 py-10 text-sm" x-text="t('logs.empty')">Aucun log à afficher.</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div x-show="logsTotal > logsLimit" class="px-5 py-3 border-t border-gray-800/60 flex justify-between items-center">
+          <span class="text-xs text-gray-600">
+            <span x-text="logsOffset+1"></span>–<span x-text="Math.min(logsOffset+logsLimit,logsTotal)"></span>
+            sur <span x-text="logsTotal"></span>
+          </span>
+                    <div class="flex gap-2">
+                        <button @click="prevLogsPage()" :disabled="logsOffset===0" class="btn btn-secondary text-xs py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                            <span x-text="t('logs.pagination.prev')">← Précédent</span>
+                        </button>
+                        <button @click="nextLogsPage()" :disabled="logsOffset+logsLimit>=logsTotal" class="btn btn-secondary text-xs py-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                            <span x-text="t('logs.pagination.next')">Suivant →</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── CONFIG ── -->
+        <div x-show="activeTab==='config'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-white" x-text="t('config.title')">Configuration</h2>
+                <p class="text-xs text-gray-600 mt-0.5" x-text="t('config.subtitle')">Gérez vos clés API et configurations SMTP.</p>
+            </div>
+
+            <div class="grid lg:grid-cols-3 gap-5">
+                <div class="lg:col-span-2 space-y-5">
+
+                    <!-- Form -->
+                    <div class="card p-5">
+                        <div class="section-title" x-text="editingKey ? t('config.form.edit_title') : t('config.form.new_title')">Nouvelle configuration SMTP</div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="sm:col-span-2">
+                                <label class="label" x-text="t('config.form.project_name')">Nom du projet</label>
+                                <input type="text" x-model="form.name" :placeholder="t('config.form.project_name_placeholder')" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.smtp_host')">Hôte SMTP</label>
+                                <input type="text" x-model="form.smtp_host" placeholder="smtp.gmail.com" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.smtp_port')">Port</label>
+                                <input type="number" x-model="form.smtp_port" placeholder="587" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.smtp_user')">Utilisateur SMTP</label>
+                                <input type="text" x-model="form.smtp_user" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.smtp_pass')">Mot de passe SMTP</label>
+                                <input type="password" x-model="form.smtp_pass" :placeholder="t('config.form.smtp_pass_placeholder')" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.from_email')">Email expéditeur (From)</label>
+                                <input type="email" x-model="form.smtp_from_email" placeholder="noreply@monsite.com" class="input">
+                            </div>
+                            <div>
+                                <label class="label" x-text="t('config.form.from_name')">Nom affiché</label>
+                                <input type="text" x-model="form.smtp_from_name" placeholder="Mon Super Site" class="input">
+                            </div>
+                        </div>
+                        <div class="mt-5 flex gap-2">
+                            <button x-show="!editingKey" @click="saveKey()" class="btn btn-success">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                                <span x-text="t('config.form.create_button')">Créer la clé</span>
+                            </button>
+                            <button x-show="editingKey" @click="updateKey()" class="btn btn-primary" x-text="t('config.form.save_button')">Sauvegarder</button>
+                            <button x-show="editingKey" @click="cancelEdit()" class="btn btn-secondary" x-text="t('config.form.cancel_button')">Annuler</button>
+                        </div>
+                    </div>
+
+                    <!-- Keys list -->
+                    <div>
+                        <div class="section-title" x-text="t('config.keys.title')">Clés configurées</div>
+                        <div class="space-y-3">
+                            <template x-for="k in keys" :key="k.id">
+                                <div class="card p-4">
+                                    <div class="flex justify-between items-start mb-3">
+                                        <div>
+                                            <div class="font-semibold text-gray-200 text-sm" x-text="k.name"></div>
+                                            <div class="text-xs text-gray-600 mt-0.5">
+                                                <span x-text="k.smtp_from_name"></span>
+                                                <span class="text-indigo-500 ml-1" x-text="'<' + k.smtp_from_email + '>'"></span>
+                                            </div>
+                                        </div>
+                                        <div class="flex gap-1">
+                                            <button @click="editKey(k.id)" class="btn btn-secondary py-1.5 px-2.5 text-xs">
+                                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                                <span x-text="t('config.keys.edit_button')">Modifier</span>
+                                            </button>
+                                            <button @click="deleteKey(k.id)" class="btn btn-danger py-1.5 px-2.5 text-xs">
+                                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                                <span x-text="t('config.keys.delete_button')">Supprimer</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="key-chip">
+                                        <svg class="w-3.5 h-3.5 text-gray-700 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                                        <span class="flex-1 truncate" x-text="visibleKeys[k.id] ? k.api_key : '••••••••••••••••••••••••••••••••••••••••'"></span>
+                                        <button @click="toggleKeyVisibility(k.id)" class="text-gray-700 hover:text-gray-400 transition p-0.5">
+                                            <svg x-show="!visibleKeys[k.id]" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                                            <svg x-show="visibleKeys[k.id]" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
+                                        </button>
+                                        <button @click="copyToClipboard(k.api_key,t('config.keys.api_key_label'))" class="text-gray-700 hover:text-emerald-400 transition p-0.5">
+                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+                            <div x-show="keys.length===0" class="card p-8 text-center text-gray-600 text-sm" x-text="t('config.keys.empty')">
+                                Aucune clé configurée. Créez-en une ci-dessus.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Domains -->
+                <div class="card p-5 h-fit">
+                    <div class="section-title" x-text="t('config.domains.title')">Domaines autorisés</div>
+                    <p class="text-xs text-gray-600 mb-4 leading-relaxed">
+                        <span x-text="t('config.domains.description')">Domaines alternatifs autorisés dans le champ</span>
+                        <span class="mono text-gray-500">From</span>.
+                    </p>
+                    <div class="space-y-3 mb-4">
+                        <div>
+                            <label class="label" x-text="t('config.domains.project_label')">Projet associé</label>
+                            <select x-model="domainForm.api_key_id" class="input">
+                                <option value="" x-text="t('config.domains.choose_option')">— Choisir —</option>
+                                <template x-for="k in keys" :key="k.id">
+                                    <option :value="k.id" x-text="k.name"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="label" x-text="t('config.domains.domain_label')">Domaine</label>
+                            <div class="flex gap-2">
+                                <input type="text" x-model="domainForm.domain" placeholder="autre-domaine.com" class="input flex-1">
+                                <button @click="addDomain()" class="btn btn-success px-3">+</button>
+                            </div>
+                        </div>
+                    </div>
+                    <hr class="divider mb-4">
+                    <ul class="space-y-1.5 max-h-64 overflow-y-auto">
+                        <template x-for="d in domains" :key="d.id">
+                            <li class="flex justify-between items-center p-2.5 rounded-lg" style="background:#060a10;border:1px solid #1a2235">
+                                <div>
+                                    <span class="mono text-xs text-indigo-400" x-text="d.domain"></span>
+                                    <span class="block text-xs text-gray-600 mt-0.5" x-text="getKeyName(d.api_key_id)"></span>
+                                </div>
+                                <button @click="deleteDomain(d.id)" class="text-gray-700 hover:text-rose-400 transition p-1">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </li>
+                        </template>
+                        <li x-show="domains.length===0" class="text-xs text-gray-600 text-center py-4" x-text="t('config.domains.empty')">Aucun domaine ajouté.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── DOCS ── -->
+        <div x-show="activeTab==='docs'" x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-white" x-text="t('docs.title')">Documentation API</h2>
+                <p class="text-xs text-gray-600 mt-0.5" x-text="t('docs.subtitle')">Intégrez l'envoi d'e-mails dans n'importe quelle app.</p>
+            </div>
+
+            <!-- Endpoint info -->
+            <div class="card p-5 mb-5">
+                <div class="section-title" x-text="t('docs.endpoint.title')">Endpoint</div>
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="btn btn-primary text-xs py-1 px-2.5 cursor-default">POST</span>
+                    <code class="mono text-sm text-gray-300">/api/send</code>
+                </div>
+                <p class="text-sm text-gray-500 leading-relaxed" x-html="t('docs.endpoint.description')">
+                    La clé API doit être transmise dans le <strong class="text-gray-400">corps JSON</strong> de la requête, sous le champ <code class="mono text-indigo-400 text-xs">api_key</code>.
+                    Le header <code class="mono text-indigo-400 text-xs">Content-Type: application/json</code> est obligatoire.
+                </p>
+            </div>
+
+            <!-- Body params -->
+            <div class="card p-5 mb-5 overflow-x-auto">
+                <div class="section-title" x-text="t('docs.params.title')">Paramètres du corps (JSON)</div>
+                <table class="data-table" style="min-width:500px">
+                    <thead><tr>
+                        <th x-text="t('docs.params.field')">Champ</th>
+                        <th x-text="t('docs.params.type')">Type</th>
+                        <th x-text="t('docs.params.required')">Obligatoire</th>
+                        <th x-text="t('docs.params.description')">Description</th>
+                    </tr></thead>
+                    <tbody>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">api_key</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td><span class="badge-err" style="font-size:10px" x-text="t('docs.params.yes')">Oui</span></td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.api_key_desc')">Votre clé API <code class="mono">sk_live_…</code></td>
+                    </tr>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">to</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td><span class="badge-err" style="font-size:10px" x-text="t('docs.params.yes')">Oui</span></td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.to_desc')">Adresse e-mail du destinataire</td>
+                    </tr>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">subject</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td><span class="badge-err" style="font-size:10px" x-text="t('docs.params.yes')">Oui</span></td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.subject_desc')">Sujet du message</td>
+                    </tr>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">text</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td class="text-gray-600 text-xs" x-text="t('docs.params.no')">Non</td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.text_desc')">Corps en texte brut</td>
+                    </tr>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">html</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td class="text-gray-600 text-xs" x-text="t('docs.params.no')">Non</td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.html_desc')">Corps en HTML</td>
+                    </tr>
+                    <tr>
+                        <td><code class="mono text-indigo-400 text-xs">from</code></td>
+                        <td class="text-xs text-gray-500">string</td>
+                        <td class="text-gray-600 text-xs" x-text="t('docs.params.no')">Non</td>
+                        <td class="text-xs text-gray-500" x-text="t('docs.params.from_desc')">Surcharge l'expéditeur (domaine autorisé requis)</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Code examples -->
+            <div class="grid md:grid-cols-2 gap-4">
+                <!-- cURL -->
+                <div class="card p-5">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="section-title" style="margin-bottom:0">cURL</div>
+                        <button @click="copyToClipboard(`curl -X POST http://localhost:3000/api/send \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"api_key\":\"sk_live_VOTRE_CLE\",\"to\":\"client@example.com\",\"subject\":\"Hello\",\"text\":\"Contenu\"}'`, 'cURL')" class="btn btn-secondary text-xs py-1 px-2.5" x-text="t('docs.examples.copy_button')">Copier</button>
+                    </div>
+                    <div class="code-block">
+                        <span class="kw">curl</span> -X POST http://localhost:3000/api/send \
+                        -H <span class="str">'Content-Type: application/json'</span> \
+                        -d <span class="str">'{
+    "api_key": "sk_live_VOTRE_CLE",
+    "to": "client@example.com",
+    "subject": "Hello",
+    "text": "Contenu"
+  }'</span>
+                    </div>
+                </div>
+
+                <!-- Python -->
+                <div class="card p-5">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="section-title" style="margin-bottom:0">Python</div>
+                        <button @click="copyToClipboard(`import requests\n\nr = requests.post(\n    'http://localhost:3000/api/send',\n    json={\n        'api_key': 'sk_live_VOTRE_CLE',\n        'to': 'client@example.com',\n        'subject': 'Hello',\n        'text': 'Contenu'\n    }\n)`, 'Python')" class="btn btn-secondary text-xs py-1 px-2.5" x-text="t('docs.examples.copy_button')">Copier</button>
+                    </div>
+                    <div class="code-block">
+                        <span class="kw">import</span> requests
+
+                        r = requests.post(
+                        <span class="str">'http://localhost:3000/api/send'</span>,
+                        json={
+                        <span class="key">'api_key'</span>: <span class="str">'sk_live_VOTRE_CLE'</span>,
+                        <span class="key">'to'</span>: <span class="str">'client@example.com'</span>,
+                        <span class="key">'subject'</span>: <span class="str">'Hello'</span>,
+                        <span class="key">'text'</span>: <span class="str">'Contenu'</span>
+                        }
+                        )
+                    </div>
+                </div>
+
+                <!-- JavaScript -->
+                <div class="card p-5">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="section-title" style="margin-bottom:0">JavaScript (fetch)</div>
+                        <button @click="copyToClipboard(`fetch('http://localhost:3000/api/send', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({\n    api_key: 'sk_live_VOTRE_CLE',\n    to: 'client@example.com',\n    subject: 'Hello',\n    text: 'Contenu',\n    html: '<h1>Contenu</h1>'\n  })\n})`, 'JS')" class="btn btn-secondary text-xs py-1 px-2.5" x-text="t('docs.examples.copy_button')">Copier</button>
+                    </div>
+                    <div class="code-block">
+                        <span class="kw">fetch</span>(<span class="str">'http://localhost:3000/api/send'</span>, {
+                        method: <span class="str">'POST'</span>,
+                        headers: { <span class="key">'Content-Type'</span>: <span class="str">'application/json'</span> },
+                        body: JSON.stringify({
+                        <span class="key">api_key</span>: <span class="str">'sk_live_VOTRE_CLE'</span>,
+                        <span class="key">to</span>: <span class="str">'client@example.com'</span>,
+                        <span class="key">subject</span>: <span class="str">'Hello'</span>,
+                        <span class="key">text</span>: <span class="str">'Contenu'</span>,
+                        <span class="key">html</span>: <span class="str">'&lt;h1&gt;Contenu&lt;/h1&gt;'</span>
+                        })
+                        })
+                    </div>
+                </div>
+
+                <!-- PHP -->
+                <div class="card p-5">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="section-title" style="margin-bottom:0">PHP</div>
+                        <button @click="copyToClipboard(`$ch = curl_init('http://localhost:3000/api/send');\ncurl_setopt($ch, CURLOPT_RETURNTRANSFER, true);\ncurl_setopt($ch, CURLOPT_POST, true);\ncurl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([\n    'api_key' => 'sk_live_VOTRE_CLE',\n    'to'      => 'client@example.com',\n    'subject' => 'Hello',\n    'text'    => 'Contenu',\n]));\ncurl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);\necho curl_exec($ch);`, 'PHP')" class="btn btn-secondary text-xs py-1 px-2.5" x-text="t('docs.examples.copy_button')">Copier</button>
+                    </div>
+                    <div class="code-block">
+                        <span class="cm">&lt;?php</span>
+                        <span class="kw">$ch</span> = curl_init(<span class="str">'http://localhost:3000/api/send'</span>);
+                        curl_setopt(<span class="kw">$ch</span>, CURLOPT_RETURNTRANSFER, <span class="kw">true</span>);
+                        curl_setopt(<span class="kw">$ch</span>, CURLOPT_POST, <span class="kw">true</span>);
+                        curl_setopt(<span class="kw">$ch</span>, CURLOPT_POSTFIELDS, json_encode([
+                        <span class="key">'api_key'</span> => <span class="str">'sk_live_VOTRE_CLE'</span>,
+                        <span class="key">'to'</span>      => <span class="str">'client@example.com'</span>,
+                        <span class="key">'subject'</span> => <span class="str">'Hello'</span>,
+                        <span class="key">'text'</span>    => <span class="str">'Contenu'</span>,
+                        ]));
+                        curl_setopt(<span class="kw">$ch</span>, CURLOPT_HTTPHEADER, [
+                        <span class="str">'Content-Type: application/json'</span>
+                        ]);
+                        <span class="kw">echo</span> curl_exec(<span class="kw">$ch</span>);
+                    </div>
+                </div>
+            </div>
+
+            <!-- Response -->
+            <div class="card p-5 mt-4">
+                <div class="section-title" x-text="t('docs.responses.title')">Réponses</div>
+                <div class="grid sm:grid-cols-2 gap-4">
+                    <div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="badge-ok">200</span>
+                            <span class="text-xs text-gray-500" x-text="t('docs.responses.success')">Succès</span>
+                        </div>
+                        <div class="code-block">{
+                            <span class="key">"success"</span>: <span class="kw">true</span>,
+                            <span class="key">"message_id"</span>: <span class="str">"&lt;uuid@host&gt;"</span>
+                            }</div>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="badge-err">403</span>
+                            <span class="text-xs text-gray-500" x-text="t('docs.responses.invalid_key')">Clé invalide</span>
+                        </div>
+                        <div class="code-block">{
+                            <span class="key">"error"</span>: <span class="str">"Clé API invalide"</span>
+                            }</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<!-- ── LOG DETAIL MODAL ── -->
+<div x-show="selectedLog" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px)" @click.self="selectedLog=null" x-transition>
+    <div class="card p-6 max-w-lg w-full max-h-screen overflow-y-auto" x-show="selectedLog">
+        <div class="flex justify-between items-center mb-5">
+            <h3 class="font-semibold text-gray-200" x-text="t('modal.title')">Détails de l'envoi</h3>
+            <button @click="selectedLog=null" class="text-gray-600 hover:text-gray-300">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <div class="label" x-text="t('modal.date')">Date</div>
+                    <div class="text-sm text-gray-300 mono" x-text="selectedLog && formatDate(selectedLog.created_at)"></div>
+                </div>
+                <div>
+                    <div class="label" x-text="t('modal.status')">Statut</div>
+                    <span x-show="selectedLog && selectedLog.status==='success'" class="badge-ok" x-text="t('modal.status_success')">Succès</span>
+                    <span x-show="selectedLog && selectedLog.status==='error'" class="badge-err" x-text="t('modal.status_error')">Erreur</span>
+                </div>
+                <div>
+                    <div class="label" x-text="t('modal.project')">Projet</div>
+                    <div class="text-sm text-gray-300" x-text="selectedLog && (selectedLog.tenant_name || '—')"></div>
+                </div>
+                <div>
+                    <div class="label" x-text="t('modal.source_ip')">IP source</div>
+                    <div class="text-sm text-gray-300 mono" x-text="selectedLog && selectedLog.ip"></div>
+                </div>
+                <div class="col-span-2">
+                    <div class="label" x-text="t('modal.recipient')">Destinataire</div>
+                    <div class="text-sm text-indigo-400 mono" x-text="selectedLog && (selectedLog.recipient || '—')"></div>
+                </div>
+                <div class="col-span-2">
+                    <div class="label" x-text="t('modal.subject')">Sujet</div>
+                    <div class="text-sm text-gray-300" x-text="selectedLog && (selectedLog.subject || '—')"></div>
+                </div>
+            </div>
+            <div x-show="selectedLog && selectedLog.error_msg" style="background:rgba(244,63,94,0.06);border:1px solid rgba(244,63,94,0.15)" class="rounded-lg p-4">
+                <div class="label" style="color:#f43f5e" x-text="t('modal.error_message')">Message d'erreur</div>
+                <p class="text-sm text-rose-300 mono break-all mt-1" x-text="selectedLog && selectedLog.error_msg"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ═══════════════════════════════════════════════════════════════
+    // SYSTÈME D'INTERNATIONALISATION (i18n)
+    // ═══════════════════════════════════════════════════════════════
+    // 
+    // Pour ajouter une nouvelle langue :
+    // 1. Copiez la structure 'fr' ci-dessous
+    // 2. Traduisez toutes les chaînes de caractères
+    // 3. Ajoutez la langue dans availableLanguages dans la fonction app()
+    // 4. C'est tout ! Le système détectera automatiquement la langue du navigateur
+    //
+    // ═══════════════════════════════════════════════════════════════
+
+    const translations = {
+        // FRANÇAIS (langue par défaut)
+        fr: {
+            login: {
+                title: 'Connexion',
+                subtitle: 'Accès réservé aux administrateurs.',
+                password_label: 'Mot de passe admin',
+                password_placeholder: '••••••••••••',
+                submit_button: 'Accéder au tableau de bord'
+            },
+            sidebar: {
+                navigation: 'Navigation',
+                dashboard: 'Tableau de bord',
+                logs: 'Historique',
+                config: 'Configuration',
+                docs: 'Documentation API',
+                language: 'Langue',
+                logout: 'Déconnexion'
+            },
+            dashboard: {
+                title: 'Tableau de bord',
+                subtitle: 'Vue d\'ensemble des envois en temps réel.',
+                refresh: 'Actualiser',
+                stats: {
+                    total: 'Total',
+                    total_desc: 'envois traités',
+                    success: 'Succès',
+                    success_desc: 'messages délivrés',
+                    errors: 'Erreurs',
+                    errors_desc: 'échecs d\'envoi',
+                    rate: 'Taux',
+                    rate_desc: 'de réussite'
+                },
+                charts: {
+                    hourly: '24 dernières heures',
+                    daily: '7 derniers jours'
+                },
+                tenants: {
+                    title: 'Activité par projet',
+                    unknown: 'Inconnu',
+                    empty: 'Aucune activité enregistrée.'
+                }
+            },
+            logs: {
+                title: 'Historique',
+                subtitle: 'Journal de tous les appels à l\'API.',
+                refresh: 'Rafraîchir',
+                filter: {
+                    all: 'Tous',
+                    success: 'Succès',
+                    error: 'Erreurs'
+                },
+                table: {
+                    date: 'Date',
+                    project: 'Projet',
+                    recipient: 'Destinataire',
+                    subject: 'Sujet',
+                    status: 'Statut'
+                },
+                status: {
+                    error: 'Erreur'
+                },
+                empty: 'Aucun log à afficher.',
+                pagination: {
+                    prev: '← Précédent',
+                    next: 'Suivant →'
+                }
+            },
+            config: {
+                title: 'Configuration',
+                subtitle: 'Gérez vos clés API et configurations SMTP.',
+                form: {
+                    new_title: 'Nouvelle configuration SMTP',
+                    edit_title: 'Modifier la configuration',
+                    project_name: 'Nom du projet',
+                    project_name_placeholder: 'Ex: Mon Site E-commerce',
+                    smtp_host: 'Hôte SMTP',
+                    smtp_port: 'Port',
+                    smtp_user: 'Utilisateur SMTP',
+                    smtp_pass: 'Mot de passe SMTP',
+                    smtp_pass_placeholder: '••••••••',
+                    from_email: 'Email expéditeur (From)',
+                    from_name: 'Nom affiché',
+                    create_button: 'Créer la clé',
+                    save_button: 'Sauvegarder',
+                    cancel_button: 'Annuler'
+                },
+                keys: {
+                    title: 'Clés configurées',
+                    edit_button: 'Modifier',
+                    delete_button: 'Supprimer',
+                    api_key_label: 'Clé API',
+                    empty: 'Aucune clé configurée. Créez-en une ci-dessus.'
+                },
+                domains: {
+                    title: 'Domaines autorisés',
+                    description: 'Domaines alternatifs autorisés dans le champ',
+                    project_label: 'Projet associé',
+                    domain_label: 'Domaine',
+                    choose_option: '— Choisir —',
+                    empty: 'Aucun domaine ajouté.'
+                }
+            },
+            docs: {
+                title: 'Documentation API',
+                subtitle: 'Intégrez l\'envoi d\'e-mails dans n\'importe quelle app.',
+                endpoint: {
+                    title: 'Endpoint',
+                    description: 'La clé API doit être transmise dans le <strong class="text-gray-400">corps JSON</strong> de la requête, sous le champ <code class="mono text-indigo-400 text-xs">api_key</code>. Le header <code class="mono text-indigo-400 text-xs">Content-Type: application/json</code> est obligatoire.'
+                },
+                params: {
+                    title: 'Paramètres du corps (JSON)',
+                    field: 'Champ',
+                    type: 'Type',
+                    required: 'Obligatoire',
+                    description: 'Description',
+                    yes: 'Oui',
+                    no: 'Non',
+                    api_key_desc: 'Votre clé API <code class="mono">sk_live_…</code>',
+                    to_desc: 'Adresse e-mail du destinataire',
+                    subject_desc: 'Sujet du message',
+                    text_desc: 'Corps en texte brut',
+                    html_desc: 'Corps en HTML',
+                    from_desc: 'Surcharge l\'expéditeur (domaine autorisé requis)'
+                },
+                examples: {
+                    copy_button: 'Copier'
+                },
+                responses: {
+                    title: 'Réponses',
+                    success: 'Succès',
+                    invalid_key: 'Clé invalide'
+                }
+            },
+            modal: {
+                title: 'Détails de l\'envoi',
+                date: 'Date',
+                status: 'Statut',
+                status_success: 'Succès',
+                status_error: 'Erreur',
+                project: 'Projet',
+                source_ip: 'IP source',
+                recipient: 'Destinataire',
+                subject: 'Sujet',
+                error_message: 'Message d\'erreur'
+            },
+            toast: {
+                copied: 'Copié !',
+                copied_message: '{label} copié dans le presse-papier',
+                copy_error: 'Erreur',
+                copy_error_message: 'Impossible de copier',
+                password_required: 'Erreur',
+                password_required_message: 'Mot de passe requis',
+                connected: 'Connecté',
+                connected_message: 'Bienvenue sur votre Gateway',
+                wrong_password: 'Erreur',
+                wrong_password_message: 'Mot de passe incorrect',
+                server_error: 'Erreur',
+                server_error_message: 'Impossible de contacter le serveur',
+                key_created: 'Clé créée',
+                key_created_message: 'Copiez-la depuis la liste',
+                create_error: 'Erreur',
+                create_error_message: 'Impossible de créer la clé',
+                updated: 'Modifié',
+                updated_message: 'Configuration mise à jour',
+                deleted: 'Supprimé',
+                deleted_message: 'Clé et configuration supprimées',
+                domain_added: 'Ajouté',
+                domain_added_message: 'Domaine autorisé',
+                domain_deleted: 'Supprimé',
+                domain_deleted_message: 'Domaine retiré',
+                fill_fields: 'Erreur',
+                fill_fields_message: 'Remplissez les deux champs'
+            }
+        },
+
+        // ENGLISH
+        en: {
+            login: {
+                title: 'Login',
+                subtitle: 'Send email directly from your code',
+                password_label: 'Admin password',
+                password_placeholder: '••••••••••••',
+                submit_button: 'Access dashboard'
+            },
+            sidebar: {
+                navigation: 'Navigation',
+                dashboard: 'Dashboard',
+                logs: 'History',
+                config: 'Configuration',
+                docs: 'API Documentation',
+                language: 'Language',
+                logout: 'Logout'
+            },
+            dashboard: {
+                title: 'Dashboard',
+                subtitle: 'Real-time overview of email sending.',
+                refresh: 'Refresh',
+                stats: {
+                    total: 'Total',
+                    total_desc: 'emails processed',
+                    success: 'Success',
+                    success_desc: 'messages delivered',
+                    errors: 'Errors',
+                    errors_desc: 'sending failures',
+                    rate: 'Rate',
+                    rate_desc: 'success rate'
+                },
+                charts: {
+                    hourly: 'Last 24 hours',
+                    daily: 'Last 7 days'
+                },
+                tenants: {
+                    title: 'Activity by project',
+                    unknown: 'Unknown',
+                    empty: 'No activity recorded.'
+                }
+            },
+            logs: {
+                title: 'History',
+                subtitle: 'Log of all API calls.',
+                refresh: 'Refresh',
+                filter: {
+                    all: 'All',
+                    success: 'Success',
+                    error: 'Errors'
+                },
+                table: {
+                    date: 'Date',
+                    project: 'Project',
+                    recipient: 'Recipient',
+                    subject: 'Subject',
+                    status: 'Status'
+                },
+                status: {
+                    error: 'Error'
+                },
+                empty: 'No logs to display.',
+                pagination: {
+                    prev: '← Previous',
+                    next: 'Next →'
+                }
+            },
+            config: {
+                title: 'Configuration',
+                subtitle: 'Manage your API keys and SMTP configurations.',
+                form: {
+                    new_title: 'New SMTP configuration',
+                    edit_title: 'Edit configuration',
+                    project_name: 'Project name',
+                    project_name_placeholder: 'Ex: My E-commerce Site',
+                    smtp_host: 'SMTP Host',
+                    smtp_port: 'Port',
+                    smtp_user: 'SMTP User',
+                    smtp_pass: 'SMTP Password',
+                    smtp_pass_placeholder: '••••••••',
+                    from_email: 'Sender email (From)',
+                    from_name: 'Display name',
+                    create_button: 'Create key',
+                    save_button: 'Save',
+                    cancel_button: 'Cancel'
+                },
+                keys: {
+                    title: 'Configured keys',
+                    edit_button: 'Edit',
+                    delete_button: 'Delete',
+                    api_key_label: 'API Key',
+                    empty: 'No key configured. Create one above.'
+                },
+                domains: {
+                    title: 'Authorized domains',
+                    description: 'Alternative domains authorized in the',
+                    project_label: 'Associated project',
+                    domain_label: 'Domain',
+                    choose_option: '— Choose —',
+                    empty: 'No domain added.'
+                }
+            },
+            docs: {
+                title: 'API Documentation',
+                subtitle: 'Integrate email sending into any app.',
+                endpoint: {
+                    title: 'Endpoint',
+                    description: 'The API key must be sent in the <strong class="text-gray-400">JSON body</strong> of the request, under the <code class="mono text-indigo-400 text-xs">api_key</code> field. The <code class="mono text-indigo-400 text-xs">Content-Type: application/json</code> header is required.'
+                },
+                params: {
+                    title: 'Body parameters (JSON)',
+                    field: 'Field',
+                    type: 'Type',
+                    required: 'Required',
+                    description: 'Description',
+                    yes: 'Yes',
+                    no: 'No',
+                    api_key_desc: 'Your API key <code class="mono">sk_live_…</code>',
+                    to_desc: 'Recipient email address',
+                    subject_desc: 'Message subject',
+                    text_desc: 'Plain text body',
+                    html_desc: 'HTML body',
+                    from_desc: 'Override sender (authorized domain required)'
+                },
+                examples: {
+                    copy_button: 'Copy'
+                },
+                responses: {
+                    title: 'Responses',
+                    success: 'Success',
+                    invalid_key: 'Invalid key'
+                }
+            },
+            modal: {
+                title: 'Sending details',
+                date: 'Date',
+                status: 'Status',
+                status_success: 'Success',
+                status_error: 'Error',
+                project: 'Project',
+                source_ip: 'Source IP',
+                recipient: 'Recipient',
+                subject: 'Subject',
+                error_message: 'Error message'
+            },
+            toast: {
+                copied: 'Copied!',
+                copied_message: '{label} copied to clipboard',
+                copy_error: 'Error',
+                copy_error_message: 'Unable to copy',
+                password_required: 'Error',
+                password_required_message: 'Password required',
+                connected: 'Connected',
+                connected_message: 'Welcome to your Gateway',
+                wrong_password: 'Error',
+                wrong_password_message: 'Incorrect password',
+                server_error: 'Error',
+                server_error_message: 'Unable to contact server',
+                key_created: 'Key created',
+                key_created_message: 'Copy it from the list',
+                create_error: 'Error',
+                create_error_message: 'Unable to create key',
+                updated: 'Updated',
+                updated_message: 'Configuration updated',
+                deleted: 'Deleted',
+                deleted_message: 'Key and configuration deleted',
+                domain_added: 'Added',
+                domain_added_message: 'Domain authorized',
+                domain_deleted: 'Deleted',
+                domain_deleted_message: 'Domain removed',
+                fill_fields: 'Error',
+                fill_fields_message: 'Fill both fields'
+            }
+        },
+
+        // ESPANOL
+        es: {
+            login: {
+                title: 'Iniciar sesión',
+                subtitle: 'Acceso reservado para administradores.',
+                password_label: 'Contraseña de administrador',
+                password_placeholder: '••••••••••••',
+                submit_button: 'Acceder al panel'
+            },
+            sidebar: {
+                navigation: 'Navegación',
+                dashboard: 'Panel',
+                logs: 'Historial',
+                config: 'Configuración',
+                docs: 'Documentación API',
+                language: 'Idioma',
+                logout: 'Cerrar sesión'
+            },
+            dashboard: {
+                title: 'Panel',
+                subtitle: 'Vista general de envíos en tiempo real.',
+                refresh: 'Actualizar',
+                stats: {
+                    total: 'Total',
+                    total_desc: 'correos procesados',
+                    success: 'Éxitos',
+                    success_desc: 'mensajes entregados',
+                    errors: 'Errores',
+                    errors_desc: 'fallos de envío',
+                    rate: 'Tasa',
+                    rate_desc: 'de éxito'
+                },
+                charts: {
+                    hourly: 'Últimas 24 horas',
+                    daily: 'Últimos 7 días'
+                },
+                tenants: {
+                    title: 'Actividad por proyecto',
+                    unknown: 'Desconocido',
+                    empty: 'Sin actividad registrada.'
+                }
+            },
+            logs: {
+                title: 'Historial',
+                subtitle: 'Registro de todas las llamadas a la API.',
+                refresh: 'Actualizar',
+                filter: {
+                    all: 'Todos',
+                    success: 'Éxitos',
+                    error: 'Errores'
+                },
+                table: {
+                    date: 'Fecha',
+                    project: 'Proyecto',
+                    recipient: 'Destinatario',
+                    subject: 'Asunto',
+                    status: 'Estado'
+                },
+                status: {
+                    error: 'Error'
+                },
+                empty: 'No hay registros para mostrar.',
+                pagination: {
+                    prev: '← Anterior',
+                    next: 'Siguiente →'
+                }
+            },
+            config: {
+                title: 'Configuración',
+                subtitle: 'Gestiona tus claves API y configuraciones SMTP.',
+                form: {
+                    new_title: 'Nueva configuración SMTP',
+                    edit_title: 'Editar configuración',
+                    project_name: 'Nombre del proyecto',
+                    project_name_placeholder: 'Ej: Mi Sitio E-commerce',
+                    smtp_host: 'Host SMTP',
+                    smtp_port: 'Puerto',
+                    smtp_user: 'Usuario SMTP',
+                    smtp_pass: 'Contraseña SMTP',
+                    smtp_pass_placeholder: '••••••••',
+                    from_email: 'Email remitente (From)',
+                    from_name: 'Nombre visible',
+                    create_button: 'Crear clave',
+                    save_button: 'Guardar',
+                    cancel_button: 'Cancelar'
+                },
+                keys: {
+                    title: 'Claves configuradas',
+                    edit_button: 'Editar',
+                    delete_button: 'Eliminar',
+                    api_key_label: 'Clave API',
+                    empty: 'No hay claves configuradas. Crea una arriba.'
+                },
+                domains: {
+                    title: 'Dominios autorizados',
+                    description: 'Dominios alternativos autorizados en el campo',
+                    project_label: 'Proyecto asociado',
+                    domain_label: 'Dominio',
+                    choose_option: '— Elegir —',
+                    empty: 'No hay dominios agregados.'
+                }
+            },
+            docs: {
+                title: 'Documentación API',
+                subtitle: 'Integra el envío de correos en cualquier app.',
+                endpoint: {
+                    title: 'Endpoint',
+                    description: 'La clave API debe enviarse en el <strong class="text-gray-400">cuerpo JSON</strong> de la petición, bajo el campo <code class="mono text-indigo-400 text-xs">api_key</code>. El header <code class="mono text-indigo-400 text-xs">Content-Type: application/json</code> es obligatorio.'
+                },
+                params: {
+                    title: 'Parámetros del cuerpo (JSON)',
+                    field: 'Campo',
+                    type: 'Tipo',
+                    required: 'Obligatorio',
+                    description: 'Descripción',
+                    yes: 'Sí',
+                    no: 'No',
+                    api_key_desc: 'Tu clave API <code class="mono">sk_live_…</code>',
+                    to_desc: 'Dirección de correo del destinatario',
+                    subject_desc: 'Asunto del mensaje',
+                    text_desc: 'Cuerpo en texto plano',
+                    html_desc: 'Cuerpo en HTML',
+                    from_desc: 'Sobrescribe el remitente (dominio autorizado requerido)'
+                },
+                examples: {
+                    copy_button: 'Copiar'
+                },
+                responses: {
+                    title: 'Respuestas',
+                    success: 'Éxito',
+                    invalid_key: 'Clave inválida'
+                }
+            },
+            modal: {
+                title: 'Detalles del envío',
+                date: 'Fecha',
+                status: 'Estado',
+                status_success: 'Éxito',
+                status_error: 'Error',
+                project: 'Proyecto',
+                source_ip: 'IP origen',
+                recipient: 'Destinatario',
+                subject: 'Asunto',
+                error_message: 'Mensaje de error'
+            },
+            toast: {
+                copied: '¡Copiado!',
+                copied_message: '{label} copiado al portapapeles',
+                copy_error: 'Error',
+                copy_error_message: 'No se pudo copiar',
+                password_required: 'Error',
+                password_required_message: 'Contraseña requerida',
+                connected: 'Conectado',
+                connected_message: 'Bienvenido a tu Gateway',
+                wrong_password: 'Error',
+                wrong_password_message: 'Contraseña incorrecta',
+                server_error: 'Error',
+                server_error_message: 'No se pudo contactar al servidor',
+                key_created: 'Clave creada',
+                key_created_message: 'Cópiala desde la lista',
+                create_error: 'Error',
+                create_error_message: 'No se pudo crear la clave',
+                updated: 'Actualizado',
+                updated_message: 'Configuración actualizada',
+                deleted: 'Eliminado',
+                deleted_message: 'Clave y configuración eliminadas',
+                domain_added: 'Agregado',
+                domain_added_message: 'Dominio autorizado',
+                domain_deleted: 'Eliminado',
+                domain_deleted_message: 'Dominio removido',
+                fill_fields: 'Error',
+                fill_fields_message: 'Completa ambos campos'
+            }
+        },
+
+        // DEUTSCH
+        de: {
+            login: {
+                title: 'Anmeldung',
+                subtitle: 'Zugang nur für Administratoren.',
+                password_label: 'Admin-Passwort',
+                password_placeholder: '••••••••••••',
+                submit_button: 'Zum Dashboard'
+            },
+            sidebar: {
+                navigation: 'Navigation',
+                dashboard: 'Dashboard',
+                logs: 'Verlauf',
+                config: 'Konfiguration',
+                docs: 'API-Dokumentation',
+                language: 'Sprache',
+                logout: 'Abmelden'
+            },
+            dashboard: {
+                title: 'Dashboard',
+                subtitle: 'Echtzeit-Übersicht der Sendungen.',
+                refresh: 'Aktualisieren',
+                stats: {
+                    total: 'Gesamt',
+                    total_desc: 'verarbeitete Sendungen',
+                    success: 'Erfolge',
+                    success_desc: 'zugestellte Nachrichten',
+                    errors: 'Fehler',
+                    errors_desc: 'Sendefehler',
+                    rate: 'Rate',
+                    rate_desc: 'Erfolgsquote'
+                },
+                charts: {
+                    hourly: 'Letzte 24 Stunden',
+                    daily: 'Letzte 7 Tage'
+                },
+                tenants: {
+                    title: 'Aktivität nach Projekt',
+                    unknown: 'Unbekannt',
+                    empty: 'Keine Aktivität aufgezeichnet.'
+                }
+            },
+            logs: {
+                title: 'Verlauf',
+                subtitle: 'Protokoll aller API-Aufrufe.',
+                refresh: 'Aktualisieren',
+                filter: {
+                    all: 'Alle',
+                    success: 'Erfolge',
+                    error: 'Fehler'
+                },
+                table: {
+                    date: 'Datum',
+                    project: 'Projekt',
+                    recipient: 'Empfänger',
+                    subject: 'Betreff',
+                    status: 'Status'
+                },
+                status: {
+                    error: 'Fehler'
+                },
+                empty: 'Keine Protokolle anzuzeigen.',
+                pagination: {
+                    prev: '← Zurück',
+                    next: 'Weiter →'
+                }
+            },
+            config: {
+                title: 'Konfiguration',
+                subtitle: 'Verwalten Sie Ihre API-Schlüssel und SMTP-Konfigurationen.',
+                form: {
+                    new_title: 'Neue SMTP-Konfiguration',
+                    edit_title: 'Konfiguration bearbeiten',
+                    project_name: 'Projektname',
+                    project_name_placeholder: 'Bsp: Meine E-Commerce-Seite',
+                    smtp_host: 'SMTP-Host',
+                    smtp_port: 'Port',
+                    smtp_user: 'SMTP-Benutzer',
+                    smtp_pass: 'SMTP-Passwort',
+                    smtp_pass_placeholder: '••••••••',
+                    from_email: 'Absender-E-Mail (From)',
+                    from_name: 'Anzeigename',
+                    create_button: 'Schlüssel erstellen',
+                    save_button: 'Speichern',
+                    cancel_button: 'Abbrechen'
+                },
+                keys: {
+                    title: 'Konfigurierte Schlüssel',
+                    edit_button: 'Bearbeiten',
+                    delete_button: 'Löschen',
+                    api_key_label: 'API-Schlüssel',
+                    empty: 'Kein Schlüssel konfiguriert. Erstellen Sie einen oben.'
+                },
+                domains: {
+                    title: 'Autorisierte Domains',
+                    description: 'Alternative Domains im Feld',
+                    project_label: 'Zugehöriges Projekt',
+                    domain_label: 'Domain',
+                    choose_option: '— Auswählen —',
+                    empty: 'Keine Domain hinzugefügt.'
+                }
+            },
+            docs: {
+                title: 'API-Dokumentation',
+                subtitle: 'Integrieren Sie den E-Mail-Versand in jede App.',
+                endpoint: {
+                    title: 'Endpunkt',
+                    description: 'Der API-Schlüssel muss im <strong class="text-gray-400">JSON-Body</strong> der Anfrage unter dem Feld <code class="mono text-indigo-400 text-xs">api_key</code> übermittelt werden. Der Header <code class="mono text-indigo-400 text-xs">Content-Type: application/json</code> ist erforderlich.'
+                },
+                params: {
+                    title: 'Body-Parameter (JSON)',
+                    field: 'Feld',
+                    type: 'Typ',
+                    required: 'Erforderlich',
+                    description: 'Beschreibung',
+                    yes: 'Ja',
+                    no: 'Nein',
+                    api_key_desc: 'Ihr API-Schlüssel <code class="mono">sk_live_…</code>',
+                    to_desc: 'E-Mail-Adresse des Empfängers',
+                    subject_desc: 'Nachrichtenbetreff',
+                    text_desc: 'Klartext-Body',
+                    html_desc: 'HTML-Body',
+                    from_desc: 'Absender überschreiben (autorisierte Domain erforderlich)'
+                },
+                examples: {
+                    copy_button: 'Kopieren'
+                },
+                responses: {
+                    title: 'Antworten',
+                    success: 'Erfolg',
+                    invalid_key: 'Ungültiger Schlüssel'
+                }
+            },
+            modal: {
+                title: 'Sendungsdetails',
+                date: 'Datum',
+                status: 'Status',
+                status_success: 'Erfolg',
+                status_error: 'Fehler',
+                project: 'Projekt',
+                source_ip: 'Quell-IP',
+                recipient: 'Empfänger',
+                subject: 'Betreff',
+                error_message: 'Fehlermeldung'
+            },
+            toast: {
+                copied: 'Kopiert!',
+                copied_message: '{label} in die Zwischenablage kopiert',
+                copy_error: 'Fehler',
+                copy_error_message: 'Kopieren nicht möglich',
+                password_required: 'Fehler',
+                password_required_message: 'Passwort erforderlich',
+                connected: 'Verbunden',
+                connected_message: 'Willkommen in Ihrem Gateway',
+                wrong_password: 'Fehler',
+                wrong_password_message: 'Falsches Passwort',
+                server_error: 'Fehler',
+                server_error_message: 'Server nicht erreichbar',
+                key_created: 'Schlüssel erstellt',
+                key_created_message: 'Kopieren Sie ihn aus der Liste',
+                create_error: 'Fehler',
+                create_error_message: 'Schlüssel konnte nicht erstellt werden',
+                updated: 'Aktualisiert',
+                updated_message: 'Konfiguration aktualisiert',
+                deleted: 'Gelöscht',
+                deleted_message: 'Schlüssel und Konfiguration gelöscht',
+                domain_added: 'Hinzugefügt',
+                domain_added_message: 'Domain autorisiert',
+                domain_deleted: 'Gelöscht',
+                domain_deleted_message: 'Domain entfernt',
+                fill_fields: 'Fehler',
+                fill_fields_message: 'Beide Felder ausfüllen'
+            }
+        }
+    };
+
+    function app() {
+        return {
+            adminPassword: '',
+            loaded: false,
+            activeTab: 'dashboard',
+            keys: [],
+            domains: [],
+            editingKey: null,
+            visibleKeys: {},
+            toasts: [],
+            stats: { total: 0, success: 0, errors: 0, rate: 0, hourly: [], daily: [], by_tenant: [] },
+            hourlyChart: null,
+            dailyChart: null,
+            logs: [], logsTotal: 0, logsLimit: 20, logsOffset: 0, logFilter: '',
+            selectedLog: null,
+            form: { name:'', smtp_host:'', smtp_port:587, smtp_user:'', smtp_pass:'', smtp_from_email:'', smtp_from_name:'' },
+            domainForm: { api_key_id:'', domain:'' },
+
+            // ═══════════════════════════════════════════════════════════════
+            // SYSTÈME DE LANGUE
+            // ═══════════════════════════════════════════════════════════════
+            currentLang: 'fr',
+            availableLanguages: [
+                { code: 'fr', name: 'Français' },
+                { code: 'en', name: 'English' },
+                { code: 'es', name: 'Español' },
+                { code: 'de', name: 'Deutsch' }
+            ],
+
+            init() {
+
+                this.detectLanguage();
+
+                const saved = localStorage.getItem('adminPassword');
+                if (saved) { this.adminPassword = saved; this.loadData(); }
+            },
+
+            detectLanguage() {
+
+                const savedLang = localStorage.getItem('appLanguage');
+                if (savedLang && translations[savedLang]) {
+                    this.currentLang = savedLang;
+                    return;
+                }
+
+
+                const browserLang = navigator.language || navigator.userLanguage;
+                const langCode = browserLang.split('-')[0];
+
+
+                if (translations[langCode]) {
+                    this.currentLang = langCode;
+                } else {
+                    this.currentLang = 'fr';
+                }
+
+
+                localStorage.setItem('appLanguage', this.currentLang);
+            },
+
+            changeLanguage(langCode) {
+                this.currentLang = langCode;
+                localStorage.setItem('appLanguage', langCode);
+
+
+                document.documentElement.lang = langCode;
+
+
+                if (this.loaded) {
+                    this.$nextTick(() => this.renderCharts());
+                }
+            },
+
+            t(key) {
+
+                const keys = key.split('.');
+                let value = translations[this.currentLang];
+
+                for (const k of keys) {
+                    if (value && typeof value === 'object' && k in value) {
+                        value = value[k];
+                    } else {
+
+                        console.warn(`Translation key not found: ${key}`);
+                        return key;
+                    }
+                }
+
+                return value;
+            },
+
+            addToast(type, title, message) {
+                const id = Date.now();
+                this.toasts.push({ id, type, title, message, show: true });
+                setTimeout(() => this.removeToast(id), 4000);
+            },
+            removeToast(id) {
+                const t = this.toasts.find(t => t.id === id);
+                if (t) t.show = false;
+                setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 300);
+            },
+
+            async copyToClipboard(text, label = 'Texte') {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    this.addToast('success', this.t('toast.copied'), this.t('toast.copied_message').replace('{label}', label));
+                } catch {
+                    this.addToast('error', this.t('toast.copy_error'), this.t('toast.copy_error_message'));
+                }
+            },
+
+            toggleKeyVisibility(id) { this.visibleKeys[id] = !this.visibleKeys[id]; },
+
+            formatDate(d) {
+                if (!d) return '—';
+                const locale = this.currentLang === 'fr' ? 'fr-FR' :
+                    this.currentLang === 'en' ? 'en-US' :
+                        this.currentLang === 'es' ? 'es-ES' :
+                            this.currentLang === 'de' ? 'de-DE' : 'fr-FR';
+                return new Date(d).toLocaleString(locale, { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+            },
+
+            async loadData() {
+                if (!this.adminPassword) return this.addToast('error', this.t('toast.password_required'), this.t('toast.password_required_message'));
+                try {
+                    const res = await fetch('/api/admin/config', { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.keys = data.keys; this.domains = data.domains;
+                        this.loaded = true;
+                        localStorage.setItem('adminPassword', this.adminPassword);
+                        this.addToast('success', this.t('toast.connected'), this.t('toast.connected_message'));
+                        this.loadStats(); this.loadLogs();
+                    } else {
+                        this.addToast('error', this.t('toast.wrong_password'), this.t('toast.wrong_password_message'));
+                    }
+                } catch {
+                    this.addToast('error', this.t('toast.server_error'), this.t('toast.server_error_message'));
+                }
+            },
+
+            logout() {
+                this.loaded = false;
+                this.adminPassword = '';
+                localStorage.removeItem('adminPassword');
+            },
+
+            async loadStats() {
+                try {
+                    const res = await fetch('/api/admin/stats', { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                    if (res.ok) {
+                        this.stats = await res.json();
+                        this.$nextTick(() => this.renderCharts());
+                    }
+                } catch(e) { console.error(e); }
+            },
+
+            renderCharts() {
+                const opts = {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#4a5a7a',
+                                font: { size: 11, family: 'Inter' }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#374161', font: { size: 10 } }, grid: { color: '#111827' } },
+                        y: { ticks: { color: '#374161', font: { size: 10 } }, grid: { color: '#111827' }, beginAtZero: true }
+                    }
+                };
+
+                const successLabel = this.t('dashboard.stats.success');
+                const errorLabel = this.t('dashboard.stats.errors');
+
+                const hCtx = document.getElementById('hourlyChart');
+                if (this.hourlyChart) this.hourlyChart.destroy();
+                if (hCtx && this.stats.hourly) {
+                    this.hourlyChart = new Chart(hCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: this.stats.hourly.map(h => h.hour),
+                            datasets: [
+                                { label: successLabel, data: this.stats.hourly.map(h => h.success), backgroundColor: 'rgba(16,185,129,0.5)', borderRadius: 3 },
+                                { label: errorLabel, data: this.stats.hourly.map(h => h.error), backgroundColor: 'rgba(244,63,94,0.5)', borderRadius: 3 }
+                            ]
+                        },
+                        options: opts
+                    });
+                }
+
+                const dCtx = document.getElementById('dailyChart');
+                if (this.dailyChart) this.dailyChart.destroy();
+                if (dCtx && this.stats.daily) {
+                    this.dailyChart = new Chart(dCtx, {
+                        type: 'line',
+                        data: {
+                            labels: this.stats.daily.map(d => d.day),
+                            datasets: [
+                                { label: successLabel, data: this.stats.daily.map(d => d.success), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.06)', tension: 0.4, fill: true, pointRadius: 3 },
+                                { label: errorLabel, data: this.stats.daily.map(d => d.error), borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.06)', tension: 0.4, fill: true, pointRadius: 3 }
+                            ]
+                        },
+                        options: opts
+                    });
+                }
+            },
+
+            async loadLogs() {
+                try {
+                    let url = `/api/admin/logs?limit=${this.logsLimit}&offset=${this.logsOffset}`;
+                    if (this.logFilter) url += `&status=${this.logFilter}`;
+                    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                    if (res.ok) {
+                        const d = await res.json();
+                        this.logs = d.logs;
+                        this.logsTotal = d.total;
+                    }
+                } catch(e) { console.error(e); }
+            },
+
+            nextLogsPage() {
+                if (this.logsOffset + this.logsLimit < this.logsTotal) {
+                    this.logsOffset += this.logsLimit;
+                    this.loadLogs();
+                }
+            },
+
+            prevLogsPage() {
+                if (this.logsOffset >= this.logsLimit) {
+                    this.logsOffset -= this.logsLimit;
+                    this.loadLogs();
+                }
+            },
+
+            async saveKey() {
+                const res = await fetch('/api/admin/keys', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.adminPassword}`
+                    },
+                    body: JSON.stringify(this.form)
+                });
+                if (res.ok) {
+                    this.addToast('success', this.t('toast.key_created'), this.t('toast.key_created_message'));
+                    this.resetForm();
+                    this.loadData();
+                } else {
+                    this.addToast('error', this.t('toast.create_error'), this.t('toast.create_error_message'));
+                }
+            },
+
+            async editKey(id) {
+                const res = await fetch(`/api/admin/keys/${id}`, { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                if (res.ok) {
+                    this.form = await res.json();
+                    this.editingKey = id;
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            },
+
+            async updateKey() {
+                const res = await fetch(`/api/admin/keys/${this.editingKey}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.adminPassword}`
+                    },
+                    body: JSON.stringify(this.form)
+                });
+                if (res.ok) {
+                    this.addToast('success', this.t('toast.updated'), this.t('toast.updated_message'));
+                    this.resetForm();
+                    this.loadData();
+                }
+            },
+
+            cancelEdit() { this.resetForm(); },
+
+            resetForm() {
+                this.form = { name:'', smtp_host:'', smtp_port:587, smtp_user:'', smtp_pass:'', smtp_from_email:'', smtp_from_name:'' };
+                this.editingKey = null;
+            },
+
+            async deleteKey(id) {
+                if (!confirm(this.t('config.keys.delete_confirm') || 'Supprimer cette clé et sa config SMTP ?')) return;
+                await fetch(`/api/admin/keys/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                this.addToast('success', this.t('toast.deleted'), this.t('toast.deleted_message'));
+                this.loadData();
+            },
+
+            async addDomain() {
+                if (!this.domainForm.api_key_id || !this.domainForm.domain) {
+                    return this.addToast('error', this.t('toast.fill_fields'), this.t('toast.fill_fields_message'));
+                }
+                await fetch('/api/admin/domains', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.adminPassword}`
+                    },
+                    body: JSON.stringify(this.domainForm)
+                });
+                this.domainForm.domain = '';
+                this.addToast('success', this.t('toast.domain_added'), this.t('toast.domain_added_message'));
+                this.loadData();
+            },
+
+            async deleteDomain(id) {
+                await fetch(`/api/admin/domains/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                this.addToast('success', this.t('toast.domain_deleted'), this.t('toast.domain_deleted_message'));
+                this.loadData();
+            },
+
+            getKeyName(id) {
+                const k = this.keys.find(x => x.id === id);
+                return k ? k.name : this.t('dashboard.tenants.unknown');
+            }
+        }
+    }
+</script>
+</body>
+</html>
