@@ -3,7 +3,7 @@ require 'sqlite3'
 require 'mail'
 require 'json'
 require 'securerandom'
-require 'dotenv/load'
+require 'dotenv/load' if ENV['RACK_ENV'] != 'production'
 require 'rack/cors'
 require 'logger'
 
