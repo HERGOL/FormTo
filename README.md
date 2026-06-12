@@ -69,24 +69,20 @@ http://localhost:3000
 ## Docker Compose Configuration
 
 ```yaml
-        services:
-          formto:
-            image: yidirk/formto:latest
-            container_name: formto
-            restart: unless-stopped
-            ports:
-              - "3000:3000"
-            environment:
-              - PORT=3000
-              - RACK_ENV=production
-              - ADMIN_PASSWORD=wMlM4w1S&CYjZ*q
-            volumes:
-              - ./data:/app/data
-            healthcheck:
-              test: [ "CMD", "curl", "-f", "http://localhost:3000" ]
-              interval: 30s
-              timeout: 5s
-              retries: 3
+
+services:
+  formto:
+    image: yidirk/formto:latest
+    container_name: formto
+    restart: unless-stopped
+    ports:
+      - "3080:3000"
+    environment:
+      - PORT=3080
+      - RACK_ENV=production
+      - ADMIN_PASSWORD=wMlM4w1S&CYjZ*q
+    volumes:
+      - ./data:/app/data
 ```
 
 ### Environment Variables

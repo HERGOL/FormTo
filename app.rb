@@ -361,6 +361,86 @@ delete '/api/admin/domains/:id' do
   json_response({ success: true })
 end
 
+post '/api/admin/test-smtp' do
+  admin_auth!
+  request.body.rewind
+  data = JSON.parse(request.body.read)
+
+  begin
+    smtp_host = data['smtp_host']
+    smtp_port = data['smtp_port'].to_i
+    smtp_user = data['smtp_user']
+    smtp_pass = data['smtp_pass']
+    from_email = data['smtp_from_email']
+    from_name  = data['smtp_from_name']
+
+    message = Mail.new do
+      from    "#{from_name} <#{from_email}>"
+      to      from_email
+      subject 'FormTo — Test SMTP'
+      text_part { body 'Si vous recevez ce message, votre configuration SMTP est correcte.' }
+    end
+
+    message.delivery_method :smtp, {
+      address:              smtp_host,
+      port:                 smtp_port,
+      user_name:            smtp_user,
+      password:             smtp_pass,
+      authentication:       :plain,
+      enable_starttls_auto: true
+    }
+
+    message.deliver!
+    LOGGER.info("Test SMTP OK | #{smtp_user}@#{smtp_host}")
+    json_response({ success: true })
+
+  rescue => e
+    LOGGER.warn("Test SMTP échoué | #{e.message}")
+    halt 400, json_response({ success: false, error: e.message }, 400)
+  end
+end
+
+# ─────────────────────────────────────────
+#  Check Update
+# ────
+get '/api/admin/check-update' do
+  admin_auth!
+  begin
+    require 'net/http'
+    require 'uri'
+
+    uri = URI('https://hub.docker.com/v2/repositories/yidirk/formto/tags/latest')
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    http.read_timeout = 5
+    http.open_timeout = 5
+
+    req = Net::HTTP::Get.new(uri)
+    req['Accept'] = 'application/json'
+
+    response = http.request(req)
+    data = JSON.parse(response.body)
+
+    remote_digest = data.dig('images', 0, 'digest')
+    last_pushed   = data['tag_last_pushed']
+
+
+    local_digest_path = '/etc/formto-digest'
+    local_digest = File.exist?(local_digest_path) ? File.read(local_digest_path).strip : nil
+
+    update_available = local_digest && remote_digest && local_digest != remote_digest
+
+    LOGGER.info("Check update | remote=#{remote_digest&.slice(0,20)} local=#{local_digest&.slice(0,20)}")
+    json_response({
+                    update_available: update_available,
+                    last_pushed: last_pushed,
+                    remote_digest: remote_digest&.slice(0, 20)
+                  })
+  rescue => e
+    LOGGER.warn("Check update échoué | #{e.message}")
+    json_response({ update_available: false, error: e.message })
+  end
+end
 # ─────────────────────────────────────────
 #  Routes Admin — Stats & Logs
 # ─────────────────────────────────────────

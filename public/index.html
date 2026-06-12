@@ -270,6 +270,19 @@
 
         <!-- Language Selector -->
         <div class="p-4 border-t border-gray-800/60">
+            <!-- Bouton mise à jour -->
+            <div x-show="updateAvailable" class="mb-3">
+                <a href="https://hub.docker.com/r/yidirk/formto" target="_blank"
+                   class="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs font-medium
+              bg-amber-500/10 border border-amber-500/20 text-amber-400
+              hover:bg-amber-500/15 transition-all">
+        <span class="relative flex h-2 w-2 flex-shrink-0">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span>
+        </span>
+                    Mise à jour disponible
+                </a>
+            </div>
             <div class="mb-3">
                 <label class="text-xs font-semibold text-gray-700 uppercase tracking-widest mb-2 block" x-text="t('sidebar.language')">Langue</label>
                 <select x-model="currentLang" @change="changeLanguage($event.target.value)" class="lang-selector w-full">
@@ -478,9 +491,23 @@
                             </div>
                         </div>
                         <div class="mt-5 flex gap-2">
-                            <button x-show="!editingKey" @click="saveKey()" class="btn btn-success">
-                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
-                                <span x-text="t('config.form.create_button')">Créer la clé</span>
+                            <button x-show="!editingKey" @click="saveKey()" :disabled="smtpTesting"
+                                    :class="smtpTesting ? 'opacity-60 cursor-not-allowed' : ''"
+                                    class="btn btn-success">
+                                <svg x-show="smtpTesting" class="animate-spin w-4 h-4 flex-shrink-0"
+                                     fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10"
+                                            stroke="currentColor" stroke-width="4"/>
+                                    <path class="opacity-75" fill="currentColor"
+                                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                                </svg>
+                                <svg x-show="!smtpTesting" class="w-3.5 h-3.5" fill="none"
+                                     viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                          stroke-width="2.5" d="M12 4v16m8-8H4"/>
+                                </svg>
+
+                                <span x-text="smtpTesting ? 'Vérification SMTP…' : t('config.form.create_button')"></span>
                             </button>
                             <button x-show="editingKey" @click="updateKey()" class="btn btn-primary" x-text="t('config.form.save_button')">Sauvegarder</button>
                             <button x-show="editingKey" @click="cancelEdit()" class="btn btn-secondary" x-text="t('config.form.cancel_button')">Annuler</button>
@@ -1541,6 +1568,9 @@
             selectedLog: null,
             form: { name:'', smtp_host:'', smtp_port:587, smtp_user:'', smtp_pass:'', smtp_from_email:'', smtp_from_name:'' },
             domainForm: { api_key_id:'', domain:'' },
+            updateAvailable: false,
+            lastPushed: null,
+            smtpTesting: false,
 
             // ═══════════════════════════════════════════════════════════════
             // SYSTÈME DE LANGUE
@@ -1560,7 +1590,18 @@
                 const saved = localStorage.getItem('adminPassword');
                 if (saved) { this.adminPassword = saved; this.loadData(); }
             },
-
+            async checkUpdate() {
+                try {
+                    const res = await fetch('/api/admin/check-update', {
+                        headers: { 'Authorization': `Bearer ${this.adminPassword}` }
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.updateAvailable = data.update_available;
+                        this.lastPushed = data.last_pushed;
+                    }
+                } catch(e) { console.error(e); }
+            },
             detectLanguage() {
 
                 const savedLang = localStorage.getItem('appLanguage');
@@ -1657,6 +1698,7 @@
                         localStorage.setItem('adminPassword', this.adminPassword);
                         this.addToast('success', this.t('toast.connected'), this.t('toast.connected_message'));
                         this.loadStats(); this.loadLogs();
+                        this.checkUpdate();
                     } else {
                         this.addToast('error', this.t('toast.wrong_password'), this.t('toast.wrong_password_message'));
                     }
@@ -1762,6 +1804,26 @@
             },
 
             async saveKey() {
+                this.smtpTesting = true;
+                this.addToast('info', 'Test en cours…', 'Vérification de la connexion SMTP');
+
+                const testRes = await fetch('/api/admin/test-smtp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.adminPassword}`
+                    },
+                    body: JSON.stringify(this.form)
+                });
+
+                const testData = await testRes.json();
+                this.smtpTesting = false;
+
+                if (!testRes.ok || !testData.success) {
+                    this.addToast('error', 'SMTP invalide', testData.error || 'Connexion échouée');
+                    return;
+                }
+
                 const res = await fetch('/api/admin/keys', {
                     method: 'POST',
                     headers: {
@@ -1770,8 +1832,9 @@
                     },
                     body: JSON.stringify(this.form)
                 });
+
                 if (res.ok) {
-                    this.addToast('success', this.t('toast.key_created'), this.t('toast.key_created_message'));
+                    this.addToast('success', this.t('toast.key_created'), 'SMTP vérifié et clé créée');
                     this.resetForm();
                     this.loadData();
                 } else {
@@ -1789,6 +1852,24 @@
             },
 
             async updateKey() {
+                this.addToast('info', 'Test en cours…', 'Vérification de la connexion SMTP');
+
+                const testRes = await fetch('/api/admin/test-smtp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.adminPassword}`
+                    },
+                    body: JSON.stringify(this.form)
+                });
+
+                const testData = await testRes.json();
+
+                if (!testRes.ok || !testData.success) {
+                    this.addToast('error', 'SMTP invalide', testData.error || 'Connexion échouée');
+                    return;
+                }
+
                 const res = await fetch(`/api/admin/keys/${this.editingKey}`, {
                     method: 'PUT',
                     headers: {
@@ -1797,8 +1878,9 @@
                     },
                     body: JSON.stringify(this.form)
                 });
+
                 if (res.ok) {
-                    this.addToast('success', this.t('toast.updated'), this.t('toast.updated_message'));
+                    this.addToast('success', this.t('toast.updated'), 'SMTP vérifié et configuration sauvegardée');
                     this.resetForm();
                     this.loadData();
                 }

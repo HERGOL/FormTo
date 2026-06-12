@@ -4,6 +4,8 @@ FROM ruby:3.3-alpine
 
 RUN apk add --no-cache build-base sqlite-dev
 
+ARG BUILD_DIGEST=unknown
+RUN echo "$BUILD_DIGEST" > /etc/formto-digest
 
 WORKDIR /app
 
