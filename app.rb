@@ -764,44 +764,52 @@ end
 # ─────────────────────────────────────────
 #  Check Update
 # ─────────────────────────────────────────
-get '/api/admin/check-update' do
-  admin_auth!
-  begin
-    require 'net/http'
-    require 'uri'
+CURRENT_VERSION = 'v1.2'.freeze
+DOCKER_IMAGE    = 'yidirk/formto'.freeze
+UPDATE_CACHE_FILE = '/tmp/formto_update_cache.json'.freeze
 
-    uri = URI('https://hub.docker.com/v2/repositories/yidirk/formto/tags/latest')
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = true
-    http.read_timeout = 5
-    http.open_timeout = 5
-
-    req = Net::HTTP::Get.new(uri)
-    req['Accept'] = 'application/json'
-
-    response = http.request(req)
-    data = JSON.parse(response.body)
-
-    remote_digest = data.dig('images', 0, 'digest')
-    last_pushed   = data['tag_last_pushed']
-
-    local_digest_path = '/etc/formto-digest'
-    local_digest = File.exist?(local_digest_path) ? File.read(local_digest_path).strip : nil
-
-    update_available = local_digest && remote_digest && local_digest != remote_digest
-
-    LOGGER.info("Check update | remote=#{remote_digest&.slice(0,20)} local=#{local_digest&.slice(0,20)}")
-    json_response({
-                    update_available: update_available,
-                    last_pushed:      last_pushed,
-                    remote_digest:    remote_digest&.slice(0, 20)
-                  })
-  rescue => e
-    LOGGER.warn("Check update échoué | #{e.message}")
-    json_response({ update_available: false, error: e.message })
+def check_update_once
+  if File.exist?(UPDATE_CACHE_FILE)
+    age = Time.now - File.mtime(UPDATE_CACHE_FILE)
+    return JSON.parse(File.read(UPDATE_CACHE_FILE), symbolize_names: true) if age < 86400
   end
+
+  require 'net/http'
+  uri = URI("https://hub.docker.com/v2/repositories/#{DOCKER_IMAGE}/tags?page_size=10&ordering=last_updated")
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true
+  http.read_timeout = 8
+  http.open_timeout = 5
+  req = Net::HTTP::Get.new(uri)
+  req['Accept']     = 'application/json'
+  req['User-Agent'] = "formto/#{CURRENT_VERSION}"
+  response = http.request(req)
+  return nil unless response.code == '200'
+
+  data = JSON.parse(response.body)
+  tags = data['results']&.map { |t| t['name'] } || []
+  latest = tags.select { |t| t.match?(/\Av?\d+\.\d+/) }
+               .sort_by { |t| t.gsub(/\Av/, '').split('.').map(&:to_i) }
+               .last
+
+  result = {
+    update_available: latest && (latest.gsub(/\Av/, '').split('.').map(&:to_i) <=> CURRENT_VERSION.gsub(/\Av/, '').split('.').map(&:to_i)) == 1,
+    current_version:  CURRENT_VERSION,
+    latest_version:   latest
+  }
+
+  File.write(UPDATE_CACHE_FILE, result.to_json)
+  result
+rescue
+  nil
 end
 
+get '/api/admin/check-update' do
+  admin_auth!
+  result = check_update_once
+  return json_response({ update_available: false, error: 'Impossible de vérifier', current_version: CURRENT_VERSION }, 503) unless result
+  json_response(result)
+end
 # ─────────────────────────────────────────
 #  Routes Admin — Stats & Logs
 # ─────────────────────────────────────────
