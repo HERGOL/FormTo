@@ -129,7 +129,7 @@
                 </div>
                 <div>
                     <div class="text-sm font-semibold text-gray-200 leading-tight">FormTo</div>
-                    <div class="text-xs text-gray-600 mono">v1.3</div>
+                    <div class="text-xs text-gray-600 mono">v1.5</div>
                 </div>
             </div>
         </div>
@@ -161,10 +161,10 @@
         </nav>
         <div class="p-4 border-t border-gray-800/60">
             <div x-show="updateAvailable" class="mb-3">
-                <a href="https://hub.docker.com/r/yidirk/formto" target="_blank" class="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/15 transition-all">
+                <button @click="updateModal.open = true" class="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/15 transition-all">
                     <span class="relative flex h-2 w-2 flex-shrink-0"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-amber-400"></span></span>
                     <span x-text="t('sidebar.update_available')">Mise à jour disponible</span>
-                </a>
+                </button>
             </div>
             <!-- Language selector -->
             <div class="mb-3">
@@ -443,6 +443,55 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ═══ CAMPAGNES ═══ -->
+            <div class="card p-5 mt-5">
+                <div class="section-title" x-text="t('newsletter.campaigns')">Campagnes</div>
+                <div x-show="!newsletterKeyId" class="text-center text-gray-600 text-sm py-8" x-text="t('newsletter.choose_project')">Choisissez un projet pour voir ses abonnés.</div>
+                <div x-show="newsletterKeyId">
+                    <div class="text-xs text-gray-600 mb-3" x-text="`${newsletterSubs.length} ${t('newsletter.recipients_count')}`"></div>
+                    <div class="grid gap-3 mb-4">
+                        <div>
+                            <label class="label" x-text="t('newsletter.campaign_subject')">Sujet</label>
+                            <input type="text" x-model="campaignForm.subject" :placeholder="t('newsletter.campaign_subject_ph')" class="input">
+                        </div>
+                        <div>
+                            <label class="label" x-text="t('newsletter.campaign_content')">Contenu (texte)</label>
+                            <textarea x-model="campaignForm.text" rows="5" class="input" :placeholder="t('newsletter.campaign_content_ph')"></textarea>
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between mb-1">
+                                <label class="label" style="margin-bottom:0" x-text="t('newsletter.campaign_html_optional')">Version HTML (optionnel)</label>
+                            </div>
+                            <textarea x-model="campaignForm.html" rows="6" class="input mono" style="font-size:11.5px" :placeholder="t('newsletter.campaign_html_ph')"></textarea>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-600 mb-3" x-text="t('newsletter.campaign_unsub_note')">Un lien de désinscription est ajouté automatiquement en bas de chaque email.</div>
+                    <button @click="sendCampaign()" :disabled="campaignSending || newsletterSubs.length===0" :class="(campaignSending || newsletterSubs.length===0) ? 'opacity-50 cursor-not-allowed' : ''" class="btn btn-success">
+                        <svg x-show="campaignSending" class="animate-spin w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        <span x-text="campaignSending ? t('newsletter.campaign_sending') : `${t('newsletter.campaign_send')} (${newsletterSubs.length})`"></span>
+                    </button>
+
+                    <hr class="divider my-5">
+                    <div class="section-title" style="margin-bottom:12px" x-text="t('newsletter.campaign_history')">Historique des campagnes</div>
+                    <div class="overflow-x-auto">
+                        <table class="data-table">
+                            <thead><tr><th x-text="t('newsletter.col_date')">Date</th><th x-text="t('newsletter.campaign_subject')">Sujet</th><th x-text="t('newsletter.campaign_sent')">Envoyés</th><th x-text="t('newsletter.campaign_failed')">Échecs</th></tr></thead>
+                            <tbody>
+                            <template x-for="c in campaigns" :key="c.id">
+                                <tr>
+                                    <td class="mono text-xs text-gray-500 whitespace-nowrap" x-text="formatDate(c.created_at)"></td>
+                                    <td class="text-gray-300 text-xs" x-text="c.subject"></td>
+                                    <td class="text-emerald-400 text-xs mono" x-text="c.sent_count"></td>
+                                    <td class="text-rose-400 text-xs mono" x-text="c.failed_count"></td>
+                                </tr>
+                            </template>
+                            <tr x-show="campaigns.length===0"><td colspan="4" class="text-center text-gray-600 py-6 text-sm" x-text="t('newsletter.no_campaigns')">Aucune campagne envoyée.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- CONFIG -->
@@ -461,6 +510,22 @@
                                 <label class="label" x-text="t('config.project_name')">Nom du projet</label>
                                 <input type="text" x-model="form.name" :placeholder="t('config.project_name_ph')" class="input">
                             </div>
+
+                            <!-- ═══ FOURNISSEUR SMTP RAPIDE ═══ -->
+                            <div class="sm:col-span-2">
+                                <label class="label" x-text="t('config.provider')">Fournisseur SMTP</label>
+                                <select x-model="smtpProvider" @change="applyProvider()" class="input">
+                                    <option value="custom" x-text="t('config.provider_custom')">Personnalisé</option>
+                                    <option value="gmail">Gmail</option>
+                                    <option value="outlook">Outlook / Office 365</option>
+                                    <option value="yahoo">Yahoo Mail</option>
+                                </select>
+                                <div x-show="smtpProvider !== 'custom'" class="text-xs mt-2 p-2.5 rounded-lg" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.15);color:#818cf8">
+                                    <span x-text="t('config.provider_hint')">Hôte et port pré-remplis. Ce fournisseur exige un mot de passe d'application (pas votre mot de passe habituel) :</span>
+                                    <a :href="providerHelpUrl()" target="_blank" class="underline font-medium" x-text="t('config.provider_help_link')">Créer un mot de passe d'application →</a>
+                                </div>
+                            </div>
+
                             <div>
                                 <label class="label" x-text="t('config.smtp_host')">Hôte SMTP</label>
                                 <input type="text" x-model="form.smtp_host" placeholder="smtp.gmail.com" class="input">
@@ -921,6 +986,39 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
     </div>
 </div>
 
+<!-- UPDATE MODAL -->
+<div x-show="updateModal.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px)" @click.self="updateModal.open=false" x-transition>
+    <div class="card p-6 max-w-lg w-full max-h-screen overflow-y-auto">
+        <div class="flex justify-between items-center mb-5">
+            <h3 class="font-semibold text-gray-200" x-text="t('updateModal.title')">Mise à jour disponible</h3>
+            <button @click="updateModal.open=false" class="text-gray-600 hover:text-gray-300"><svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+        </div>
+        <div class="flex items-center gap-3 mb-4 text-sm">
+            <span class="text-gray-500" x-text="t('updateModal.current')">Version actuelle</span>
+            <span class="mono text-gray-300" x-text="updateInfo.current_version"></span>
+            <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+            <span class="mono text-emerald-400" x-text="updateInfo.latest_version"></span>
+        </div>
+        <div class="text-xs mb-4 p-3 rounded-lg" style="background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);color:#f59e0b">
+            <span x-text="t('updateModal.why_manual')">Par sécurité, FormTo ne se met jamais à jour tout seul (ça nécessiterait de donner à l'app un accès complet à Docker sur votre serveur). Copiez la commande ci-dessous et lancez-la vous-même via SSH — vos clés, logs et abonnés newsletter sont conservés (stockés dans le volume de données, séparé du code de l'application).</span>
+        </div>
+        <div class="mb-4">
+            <div class="label" x-text="t('updateModal.compose_label')">Avec Docker Compose</div>
+            <pre class="code-block text-xs">docker compose pull
+docker compose up -d</pre>
+            <button @click="copyToClipboard('docker compose pull\n docker compose up -d', 'docker compose')" class="btn btn-secondary text-xs py-1 px-2.5 mt-2" x-text="t('docs.copy')">Copier</button>
+        </div>
+        <div>
+            <div class="label" x-text="t('updateModal.plain_label')">Sans Compose</div>
+            <pre class="code-block text-xs" x-text="plainUpdateCommand()"></pre>
+            <button @click="copyToClipboard(plainUpdateCommand(), 'docker')" class="btn btn-secondary text-xs py-1 px-2.5 mt-2" x-text="t('docs.copy')">Copier</button>
+        </div>
+        <div class="mt-5 flex justify-end">
+            <button @click="updateModal.open=false" class="btn btn-primary" x-text="t('updateModal.close')">Fermer</button>
+        </div>
+    </div>
+</div>
+
 <script>
     // ═══════════════════════════════════════════════════════════════
     // TRANSLATIONS
@@ -1018,7 +1116,26 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
                 select_project_hint: 'Choisissez un projet ci-dessus pour insérer automatiquement la bonne clé API dans l\'exemple.',
                 reset: 'Réinitialiser',
                 preview: 'Aperçu',
-                confirm_delete_sub: 'Supprimer cet abonné ?'
+                confirm_delete_sub: 'Supprimer cet abonné ?',
+                campaigns: 'Campagnes',
+                recipients_count: 'abonné(s) recevront cet email',
+                campaign_subject: 'Sujet',
+                campaign_subject_ph: 'Ex: Nos nouveautés du mois',
+                campaign_content: 'Contenu (texte)',
+                campaign_content_ph: 'Le contenu de votre email...',
+                campaign_html_optional: 'Version HTML (optionnel)',
+                campaign_html_ph: '<p>Votre contenu HTML...</p>',
+                campaign_unsub_note: 'Un lien de désinscription est ajouté automatiquement en bas de chaque email.',
+                campaign_send: 'Envoyer',
+                campaign_sending: 'Envoi en cours…',
+                campaign_confirm: 'Envoyer cette campagne à tous les abonnés ?',
+                campaign_subject_required: 'Sujet requis',
+                campaign_content_required: 'Contenu requis (texte ou HTML)',
+                campaign_sent_toast: 'Campagne envoyée',
+                campaign_sent: 'envoyés',
+                campaign_failed: 'échecs',
+                campaign_history: 'Historique des campagnes',
+                no_campaigns: 'Aucune campagne envoyée.'
             },
             config: {
                 title: 'Configuration',
@@ -1027,6 +1144,10 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
                 new_config: 'Nouvelle configuration SMTP',
                 project_name: 'Nom du projet',
                 project_name_ph: 'Ex: Mon Site E-commerce',
+                provider: 'Fournisseur SMTP',
+                provider_custom: 'Personnalisé',
+                provider_hint: 'Hôte et port pré-remplis. Ce fournisseur exige un mot de passe d\'application (pas votre mot de passe habituel) :',
+                provider_help_link: 'Créer un mot de passe d\'application →',
                 smtp_host: 'Hôte SMTP',
                 smtp_port: 'Port',
                 smtp_user: 'Utilisateur SMTP',
@@ -1151,6 +1272,14 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
                 cancel: 'Annuler',
                 save: 'Sauvegarder'
             },
+            updateModal: {
+                title: 'Mise à jour disponible',
+                current: 'Version actuelle',
+                why_manual: 'Par sécurité, FormTo ne se met jamais à jour tout seul (ça nécessiterait de donner à l\'app un accès complet à Docker sur votre serveur). Copiez la commande ci-dessous et lancez-la vous-même via SSH — vos clés, logs et abonnés newsletter sont conservés (stockés dans le volume de données, séparé du code de l\'application).',
+                compose_label: 'Avec Docker Compose',
+                plain_label: 'Sans Compose',
+                close: 'Fermer'
+            },
             toast: {
                 copied: 'Copié !',
                 copied_msg: '{label} copié dans le presse-papier',
@@ -1197,11 +1326,12 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             dashboard: { title: 'Dashboard', subtitle: 'Real-time overview of email sending.', refresh: 'Refresh', total: 'Total', total_desc: 'emails processed', success: 'Success', success_desc: 'messages delivered', errors: 'Errors', errors_desc: 'sending failures', rate: 'Rate', rate_desc: 'success rate', hourly: 'Last 24 hours', daily: 'Last 7 days', by_tenant: 'Activity by project', unknown: 'Unknown', no_activity: 'No activity recorded.' },
             ratelimit: { title: 'Rate Limits', subtitle: 'Real-time monitoring of request quotas.', refresh: 'Refresh', global_title: 'Global Server Limit', global_desc: 'All keys combined. Configurable via environment variable', limit_reached: 'Limit reached', warning: 'Warning', ok: 'OK', requests_used: 'Requests used', window: 'Window', remaining: 'Remaining', usage: 'Usage', per_key: 'Limits per API key', no_limit: 'No limit configured', unlimited: 'Unlimited', blocked: 'Blocked', used: 'used', edit_limit: 'Edit limit', no_keys: 'No key configured.' },
             logs: { title: 'History', subtitle: 'Log of all API calls.', refresh: 'Refresh', filter_all: 'All', filter_success: 'Success', filter_error: 'Errors', col_date: 'Date', col_project: 'Project', col_recipient: 'Recipient', col_subject: 'Subject', col_ip: 'IP', col_status: 'Status', status_ok: 'OK', status_error: 'Error', empty: 'No logs to display.', of: 'of', prev: 'Previous', next: 'Next' },
-            newsletter: { title: 'Newsletter', subtitle: 'Manage subscriptions and the sign-up widget to display on your site.', project: 'Project', subscribers: 'Subscribers', refresh: 'Refresh', export: 'Export CSV', choose_project: 'Choose a project to see its subscribers.', col_email: 'Email', col_date: 'Subscribed on', no_subs: 'No subscribers for this project.', widget_title: 'Sign-up widget (HTML)', widget_desc: 'Edit the code below and see the live result. The button and input are already wired to your API key.', select_project_hint: 'Choose a project above to automatically insert the right API key in the example.', reset: 'Reset', preview: 'Preview', confirm_delete_sub: 'Delete this subscriber?' },
-            config: { title: 'Configuration', subtitle: 'Manage your API keys, SMTP and rate limits.', edit_config: 'Edit configuration', new_config: 'New SMTP configuration', project_name: 'Project name', project_name_ph: 'Ex: My E-commerce Site', smtp_host: 'SMTP Host', smtp_port: 'Port', smtp_user: 'SMTP User', smtp_pass: 'SMTP Password', from_email: 'Sender Email (From)', from_name: 'Display name', notification_email: 'Recipient email for messages', notification_email_ph: 'contact@mysite.com', notification_email_desc: 'This is the only place messages received through this key are sent to. The client-side form can never choose another recipient.', no_notification_email: 'No recipient configured ⚠️', rl_title: 'Per-key Rate Limit', rl_desc: 'Limits the number of requests for this API key. Disable = unlimited.', rl_max: 'Max requests', rl_window: 'Window (seconds)', rl_opt_minute: '60s — per minute', rl_opt_hour: '3600s — per hour', rl_opt_day: '86400s — per day', rl_opt_week: '604800s — per week', rl_result: '→ Max', rl_requests: 'requests', rl_unlimited_desc: 'This key can send an unlimited number of requests (within the server global limit).', testing_smtp: 'SMTP verification…', create_key: 'Create key', save: 'Save', cancel: 'Cancel', configured_keys: 'Configured keys', rate: 'Rate', origins: 'Origins', origins_all: 'all', origins_sites: 'site(s)', edit: 'Edit', delete: 'Delete', api_key: 'API Key', no_keys: 'No key configured. Create one above.', allowed_origins: 'Allowed origins', origins_desc: 'Websites allowed to use the API key from a browser.', origins_none: 'No origin', origins_none_desc: '= key usable from anywhere (server use).', origins_atleast: 'At least one', origins_atleast_desc: '= only these sites are accepted.', associated_project: 'Associated project', choose: '— Choose —', site_url: 'Site URL', wildcard: 'Wildcard', origin_label: 'Label', optional: '(optional)', origin_label_ph: 'Ex: Main site', no_restriction: 'No restriction', origin_singular: 'origin(s)', no_origins: 'No origin restriction configured.' },
+            newsletter: { title: 'Newsletter', subtitle: 'Manage subscriptions and the sign-up widget to display on your site.', project: 'Project', subscribers: 'Subscribers', refresh: 'Refresh', export: 'Export CSV', choose_project: 'Choose a project to see its subscribers.', col_email: 'Email', col_date: 'Subscribed on', no_subs: 'No subscribers for this project.', widget_title: 'Sign-up widget (HTML)', widget_desc: 'Edit the code below and see the live result. The button and input are already wired to your API key.', select_project_hint: 'Choose a project above to automatically insert the right API key in the example.', reset: 'Reset', preview: 'Preview', confirm_delete_sub: 'Delete this subscriber?', campaigns: 'Campaigns', recipients_count: 'subscriber(s) will receive this email', campaign_subject: 'Subject', campaign_subject_ph: 'Ex: This month\'s news', campaign_content: 'Content (text)', campaign_content_ph: 'Your email content...', campaign_html_optional: 'HTML version (optional)', campaign_html_ph: '<p>Your HTML content...</p>', campaign_unsub_note: 'An unsubscribe link is automatically added at the bottom of every email.', campaign_send: 'Send', campaign_sending: 'Sending…', campaign_confirm: 'Send this campaign to all subscribers?', campaign_subject_required: 'Subject required', campaign_content_required: 'Content required (text or HTML)', campaign_sent_toast: 'Campaign sent', campaign_sent: 'sent', campaign_failed: 'failed', campaign_history: 'Campaign history', no_campaigns: 'No campaigns sent yet.' },
+            config: { title: 'Configuration', subtitle: 'Manage your API keys, SMTP and rate limits.', edit_config: 'Edit configuration', new_config: 'New SMTP configuration', project_name: 'Project name', project_name_ph: 'Ex: My E-commerce Site', provider: 'SMTP provider', provider_custom: 'Custom', provider_hint: 'Host and port pre-filled. This provider requires an app password (not your regular password):', provider_help_link: 'Create an app password →', smtp_host: 'SMTP Host', smtp_port: 'Port', smtp_user: 'SMTP User', smtp_pass: 'SMTP Password', from_email: 'Sender Email (From)', from_name: 'Display name', notification_email: 'Recipient email for messages', notification_email_ph: 'contact@mysite.com', notification_email_desc: 'This is the only place messages received through this key are sent to. The client-side form can never choose another recipient.', no_notification_email: 'No recipient configured ⚠️', rl_title: 'Per-key Rate Limit', rl_desc: 'Limits the number of requests for this API key. Disable = unlimited.', rl_max: 'Max requests', rl_window: 'Window (seconds)', rl_opt_minute: '60s — per minute', rl_opt_hour: '3600s — per hour', rl_opt_day: '86400s — per day', rl_opt_week: '604800s — per week', rl_result: '→ Max', rl_requests: 'requests', rl_unlimited_desc: 'This key can send an unlimited number of requests (within the server global limit).', testing_smtp: 'SMTP verification…', create_key: 'Create key', save: 'Save', cancel: 'Cancel', configured_keys: 'Configured keys', rate: 'Rate', origins: 'Origins', origins_all: 'all', origins_sites: 'site(s)', edit: 'Edit', delete: 'Delete', api_key: 'API Key', no_keys: 'No key configured. Create one above.', allowed_origins: 'Allowed origins', origins_desc: 'Websites allowed to use the API key from a browser.', origins_none: 'No origin', origins_none_desc: '= key usable from anywhere (server use).', origins_atleast: 'At least one', origins_atleast_desc: '= only these sites are accepted.', associated_project: 'Associated project', choose: '— Choose —', site_url: 'Site URL', wildcard: 'Wildcard', origin_label: 'Label', optional: '(optional)', origin_label_ph: 'Ex: Main site', no_restriction: 'No restriction', origin_singular: 'origin(s)', no_origins: 'No origin restriction configured.' },
             docs: { title: 'API Documentation', subtitle: 'Integrate email sending into any app.', generate_examples: 'Generate examples with your real data', generate_examples_desc: 'Pick a project: the examples below automatically adapt with the real API key and your instance URL.', project: 'Project', generic_example: '— Generic example —', instance_url: 'Your FormTo instance URL', will_arrive_at: 'Messages sent with this key will arrive at', endpoint: 'Endpoint', endpoint_desc: 'The API key must be sent in the JSON body under the api_key field. The Content-Type: application/json header is required.', recipient_fixed_title: 'The recipient is never in the request', recipient_fixed_desc: 'For security, the address that receives messages is fixed in the admin dashboard (Configuration tab), not in the client form. There is no longer a "to" field to send: even if your API key leaked, it could never be used to spam a third-party address.', origin_restriction: 'Origin restriction', origin_desc: 'Protects keys used on the browser side: even if the key is public in JS, only your sites can use it.', no_origin: 'No origin configured', no_origin_desc: 'The key accepts requests from anywhere. Ideal for server-to-server calls where the key is not exposed.', with_origin: 'With configured origins', with_origin_desc: 'Only listed sites can use the key. Requests from other origins receive a 403 ORIGIN_NOT_ALLOWED.', how_it_works: 'How it works:', wildcard_support: 'Wildcard supported', wildcard_desc: 'accepts all subdomains.', response_headers: 'Response Headers — Rate Limiting', response_headers_desc: 'These headers are included in each response to allow you to track your consumption.', description: 'Description', header_limit: 'Maximum number of authorized requests', header_remaining: 'Remaining requests in the current window', header_window: 'Window duration in seconds', header_retry: 'Seconds to wait (only present on HTTP 429)', response_429: '429 Response (limit reached):', body_params: 'Body parameters (JSON)', field: 'Field', type: 'Type', required: 'Required', yes: 'Yes', no: 'No', removed: 'Removed', to_removed_desc: 'The recipient is now fixed on the admin side, not sent by the client.', api_key_desc: 'Your API key', subject_desc: 'Message subject', text_desc: 'Plain text body', html_desc: 'HTML body', from_desc: 'Alternative sender (authorized domain required)', reply_to_desc: 'Pre-filled reply address', copy: 'Copy', subscribe_title: 'Endpoint — Newsletter subscription', subscribe_desc: 'Same authentication and protections (origin, rate limit) as /api/send. Expected JSON body: api_key and email.' },
             modal: { log_title: 'Send details', date: 'Date', status: 'Status', success: 'Success', error: 'Error', project: 'Project', source_ip: 'Source IP', recipient: 'Recipient', subject: 'Subject', error_msg: 'Error message' },
             rlModal: { title: 'Edit rate limit', enable_limit: 'Enable limit', enable_desc: 'Disabled = unlimited for this key', max_requests: 'Max requests', window: 'Window', per_minute: 'Per minute', per_hour: 'Per hour', per_day: 'Per day', per_week: 'Per week', cancel: 'Cancel', save: 'Save' },
+            updateModal: { title: 'Update available', current: 'Current version', why_manual: 'For security, FormTo never updates itself automatically (that would require giving the app full Docker access on your server). Copy the command below and run it yourself via SSH — your keys, logs and newsletter subscribers are preserved (stored in the data volume, separate from the app code).', compose_label: 'With Docker Compose', plain_label: 'Without Compose', close: 'Close' },
             toast: { copied: 'Copied!', copied_msg: '{label} copied to clipboard', copy_error: 'Error', copy_error_msg: 'Unable to copy', connected: 'Connected', welcome: 'Welcome to your Gateway', error: 'Error', password_required: 'Password required', wrong_password: 'Incorrect password', server_error: 'Unable to contact the server', testing: 'Testing…', testing_smtp: 'SMTP connection verification', smtp_invalid: 'Invalid SMTP', connection_failed: 'Connection failed', notification_email_required: 'Invalid or missing recipient email', key_created: 'Key created', key_created_msg: 'SMTP verified and key created successfully', create_error: 'Unable to create key', updated: 'Updated', config_updated: 'Configuration updated', deleted: 'Deleted', key_deleted: 'Key and configuration deleted', confirm_delete: 'Delete this key and its SMTP configuration?', added: 'Added', domain_added: 'Authorized domain', fill_fields: 'Fill in both fields', domain_removed: 'Domain removed', origin_added: 'Origin added', origin_error: 'Unable to add origin', origin_removed: 'Origin removed', choose_project: 'Choose a project and enter a URL', rl_updated: 'Rate limit updated', rl_unlimited: 'Limit disabled', sub_deleted: 'Subscriber deleted', sub_delete_error: 'Unable to delete subscriber', too_many_attempts: 'Too many attempts, try again later' },
             common: { or: 'or' }
         },
@@ -1216,6 +1346,7 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             docs: { title: 'Documentación API', subtitle: 'Integra el envío de correos en cualquier app.', generate_examples: 'Genera tus ejemplos con tus datos reales', generate_examples_desc: 'Elige un proyecto: los ejemplos se adaptan automáticamente con la clave API real y la URL de tu instancia.', project: 'Proyecto', generic_example: '— Ejemplo genérico —', instance_url: 'URL de tu instancia FormTo', will_arrive_at: 'Los mensajes enviados con esta clave llegarán a', endpoint: 'Endpoint', endpoint_desc: 'La clave API debe enviarse en el cuerpo JSON bajo el campo api_key. El encabezado Content-Type: application/json es obligatorio.', recipient_fixed_title: 'El destinatario nunca va en la solicitud', recipient_fixed_desc: 'Por seguridad, la dirección que recibe los mensajes se fija en el panel admin (pestaña Configuración), no en el formulario del cliente. Ya no existe un campo "to": aunque tu clave API se filtre, nunca podrá usarse para enviar spam a un tercero.', origin_restriction: 'Restricción por origen', origin_desc: 'Protege las claves usadas en el lado del navegador.', no_origin: 'Sin origen configurado', no_origin_desc: 'La clave acepta solicitudes desde cualquier lugar.', with_origin: 'Con orígenes configurados', with_origin_desc: 'Solo los sitios listados pueden usar la clave.', how_it_works: 'Cómo funciona:', wildcard_support: 'Comodín soportado', wildcard_desc: 'acepta todos los subdominios.', response_headers: 'Encabezados de respuesta — Rate Limiting', response_headers_desc: 'Estos encabezados se incluyen en cada respuesta.', description: 'Descripción', header_limit: 'Número máximo de solicitudes autorizadas', header_remaining: 'Solicitudes restantes en la ventana actual', header_window: 'Duración de la ventana en segundos', header_retry: 'Segundos a esperar', response_429: 'Respuesta 429 (límite alcanzado):', body_params: 'Parámetros del cuerpo (JSON)', field: 'Campo', type: 'Tipo', required: 'Obligatorio', yes: 'Sí', no: 'No', removed: 'Eliminado', to_removed_desc: 'El destinatario ahora se fija desde el admin, no lo envía el cliente.', api_key_desc: 'Tu clave API', subject_desc: 'Asunto del mensaje', text_desc: 'Cuerpo en texto plano', html_desc: 'Cuerpo en HTML', from_desc: 'Remitente alternativo (dominio autorizado requerido)', reply_to_desc: 'Dirección prellenada para responder', copy: 'Copiar', subscribe_title: 'Endpoint — Inscripción al boletín', subscribe_desc: 'Misma autenticación y protecciones (origen, rate limit) que /api/send. Cuerpo JSON esperado: api_key y email.' },
             modal: { log_title: 'Detalles del envío', date: 'Fecha', status: 'Estado', success: 'Éxito', error: 'Error', project: 'Proyecto', source_ip: 'IP origen', recipient: 'Destinatario', subject: 'Asunto', error_msg: 'Mensaje de error' },
             rlModal: { title: 'Editar límite de tasa', enable_limit: 'Activar límite', enable_desc: 'Desactivado = ilimitado para esta clave', max_requests: 'Máx solicitudes', window: 'Ventana', per_minute: 'Por minuto', per_hour: 'Por hora', per_day: 'Por día', per_week: 'Por semana', cancel: 'Cancelar', save: 'Guardar' },
+            updateModal: { title: 'Actualización disponible', current: 'Versión actual', why_manual: 'Por seguridad, FormTo nunca se actualiza solo (eso requeriría dar a la app acceso completo a Docker en su servidor). Copie el comando de abajo y ejecútelo usted mismo por SSH — sus claves, logs y suscriptores de boletín se conservan (almacenados en el volumen de datos, separado del código de la app).', compose_label: 'Con Docker Compose', plain_label: 'Sin Compose', close: 'Cerrar' },
             toast: { copied: '¡Copiado!', copied_msg: '{label} copiado al portapapeles', copy_error: 'Error', copy_error_msg: 'No se puede copiar', connected: 'Conectado', welcome: 'Bienvenido a tu Gateway', error: 'Error', password_required: 'Contraseña requerida', wrong_password: 'Contraseña incorrecta', server_error: 'No se puede contactar al servidor', testing: 'Probando…', testing_smtp: 'Verificación de conexión SMTP', smtp_invalid: 'SMTP inválido', connection_failed: 'Conexión fallida', notification_email_required: 'Email destinatario inválido o faltante', key_created: 'Clave creada', key_created_msg: 'SMTP verificado y clave creada con éxito', create_error: 'No se puede crear la clave', updated: 'Actualizado', config_updated: 'Configuración actualizada', deleted: 'Eliminado', key_deleted: 'Clave y configuración eliminadas', confirm_delete: '¿Eliminar esta clave y su configuración SMTP?', added: 'Agregado', domain_added: 'Dominio autorizado', fill_fields: 'Rellene ambos campos', domain_removed: 'Dominio eliminado', origin_added: 'Origen agregado', origin_error: 'No se puede agregar el origen', origin_removed: 'Origen eliminado', choose_project: 'Elija un proyecto e ingrese una URL', rl_updated: 'Límite de tasa actualizado', rl_unlimited: 'Límite desactivado', sub_deleted: 'Suscriptor eliminado', sub_delete_error: 'No se puede eliminar el suscriptor', too_many_attempts: 'Demasiados intentos, intente más tarde' },
             common: { or: 'o' }
         },
@@ -1230,6 +1361,7 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             docs: { title: 'API-Dokumentation', subtitle: 'Integrieren Sie den E-Mail-Versand in jede App.', generate_examples: 'Erzeuge Beispiele mit echten Daten', generate_examples_desc: 'Wähle ein Projekt: die Beispiele unten passen sich automatisch mit dem echten API-Schlüssel und der URL deiner Instanz an.', project: 'Projekt', generic_example: '— Allgemeines Beispiel —', instance_url: 'URL deiner FormTo-Instanz', will_arrive_at: 'Mit diesem Schlüssel gesendete Nachrichten landen bei', endpoint: 'Endpoint', endpoint_desc: 'Der API-Schlüssel muss im JSON-Body unter dem Feld api_key gesendet werden. Der Header Content-Type: application/json ist erforderlich.', recipient_fixed_title: 'Der Empfänger steht nie in der Anfrage', recipient_fixed_desc: 'Aus Sicherheitsgründen wird die Empfängeradresse im Admin-Dashboard (Tab Konfiguration) festgelegt, nicht im Client-Formular. Es gibt daher kein "to"-Feld mehr: selbst wenn Ihr API-Schlüssel durchsickert, kann er niemals zum Spammen einer fremden Adresse verwendet werden.', origin_restriction: 'Ursprungseinschränkung', origin_desc: 'Schützt Schlüssel, die auf Browserseite verwendet werden.', no_origin: 'Kein Ursprung konfiguriert', no_origin_desc: 'Der Schlüssel akzeptiert Anfragen von überall.', with_origin: 'Mit konfigurierten Ursprüngen', with_origin_desc: 'Nur die aufgelisteten Websites können den Schlüssel verwenden.', how_it_works: 'So funktioniert es:', wildcard_support: 'Wildcard unterstützt', wildcard_desc: 'akzeptiert alle Subdomains.', response_headers: 'Antwort-Header — Rate Limiting', response_headers_desc: 'Diese Header sind in jeder Antwort enthalten.', description: 'Beschreibung', header_limit: 'Maximale Anzahl autorisierter Anfragen', header_remaining: 'Verbleibende Anfragen im aktuellen Fenster', header_window: 'Fensterdauer in Sekunden', header_retry: 'Zu wartende Sekunden', response_429: '429 Antwort (Limit erreicht):', body_params: 'Body-Parameter (JSON)', field: 'Feld', type: 'Typ', required: 'Erforderlich', yes: 'Ja', no: 'Nein', removed: 'Entfernt', to_removed_desc: 'Der Empfänger wird jetzt admin-seitig festgelegt, nicht vom Client gesendet.', api_key_desc: 'Ihr API-Schlüssel', subject_desc: 'Nachrichtenbetreff', text_desc: 'Klartext-Body', html_desc: 'HTML-Body', from_desc: 'Alternativer Absender (autorisierte Domain erforderlich)', reply_to_desc: 'Vorausgefüllte Antwortadresse', copy: 'Kopieren', subscribe_title: 'Endpoint — Newsletter-Anmeldung', subscribe_desc: 'Gleiche Authentifizierung und Schutzmaßnahmen (Ursprung, Rate Limit) wie /api/send. Erwarteter JSON-Body: api_key und email.' },
             modal: { log_title: 'Sendungsdetails', date: 'Datum', status: 'Status', success: 'Erfolg', error: 'Fehler', project: 'Projekt', source_ip: 'Quell-IP', recipient: 'Empfänger', subject: 'Betreff', error_msg: 'Fehlermeldung' },
             rlModal: { title: 'Rate Limit bearbeiten', enable_limit: 'Limit aktivieren', enable_desc: 'Deaktiviert = unbegrenzt für diesen Schlüssel', max_requests: 'Max Anfragen', window: 'Fenster', per_minute: 'Pro Minute', per_hour: 'Pro Stunde', per_day: 'Pro Tag', per_week: 'Pro Woche', cancel: 'Abbrechen', save: 'Speichern' },
+            updateModal: { title: 'Update verfügbar', current: 'Aktuelle Version', why_manual: 'Aus Sicherheitsgründen aktualisiert sich FormTo niemals selbst automatisch (das würde erfordern, der App vollen Docker-Zugriff auf Ihrem Server zu geben). Kopieren Sie den Befehl unten und führen Sie ihn selbst per SSH aus — Ihre Schlüssel, Logs und Newsletter-Abonnenten bleiben erhalten (im Datenvolumen gespeichert, getrennt vom App-Code).', compose_label: 'Mit Docker Compose', plain_label: 'Ohne Compose', close: 'Schließen' },
             toast: { copied: 'Kopiert!', copied_msg: '{label} in die Zwischenablage kopiert', copy_error: 'Fehler', copy_error_msg: 'Kopieren nicht möglich', connected: 'Verbunden', welcome: 'Willkommen bei Ihrem Gateway', error: 'Fehler', password_required: 'Passwort erforderlich', wrong_password: 'Falsches Passwort', server_error: 'Server nicht erreichbar', testing: 'Teste…', testing_smtp: 'SMTP-Verbindungsprüfung', smtp_invalid: 'Ungültiges SMTP', connection_failed: 'Verbindung fehlgeschlagen', notification_email_required: 'Ungültige oder fehlende Empfänger-E-Mail', key_created: 'Schlüssel erstellt', key_created_msg: 'SMTP überprüft und Schlüssel erfolgreich erstellt', create_error: 'Schlüssel kann nicht erstellt werden', updated: 'Aktualisiert', config_updated: 'Konfiguration aktualisiert', deleted: 'Gelöscht', key_deleted: 'Schlüssel und Konfiguration gelöscht', confirm_delete: 'Diesen Schlüssel und seine SMTP-Konfiguration löschen?', added: 'Hinzugefügt', domain_added: 'Autorisierte Domain', fill_fields: 'Beide Felder ausfüllen', domain_removed: 'Domain entfernt', origin_added: 'Ursprung hinzugefügt', origin_error: 'Ursprung kann nicht hinzugefügt werden', origin_removed: 'Ursprung entfernt', choose_project: 'Wählen Sie ein Projekt und geben Sie eine URL ein', rl_updated: 'Rate Limit aktualisiert', rl_unlimited: 'Limit deaktiviert', sub_deleted: 'Abonnent gelöscht', sub_delete_error: 'Abonnent kann nicht gelöscht werden', too_many_attempts: 'Zu viele Versuche, bitte später erneut versuchen' },
             common: { or: 'oder' }
         }
@@ -1263,6 +1395,8 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             domainForm: { api_key_id:'', domain:'' },
             originForm: { api_key_id:'', origin:'', label:'' },
             updateAvailable: false,
+            updateInfo: { current_version: '', latest_version: '', docker_image: 'yidirk/formto' },
+            updateModal: { open: false },
             smtpTesting: false,
             rlStats: { global: null, keys: [] },
             rlEditModal: { open: false, id: null, name: '', enabled: false, max: '', window: '3600' },
@@ -1271,6 +1405,12 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             newsletterKeyId: '',
             newsletterSubs: [],
             widgetHtml: '',
+            campaigns: [],
+            campaignSending: false,
+            campaignForm: { subject: '', text: '', html: '' },
+
+            // ── Fournisseur SMTP rapide ──
+            smtpProvider: 'custom',
 
             // ── Générateur d'exemples interactif (Docs) ──
             docsSelectedKeyId: '',
@@ -1322,8 +1462,24 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
             async checkUpdate() {
                 try {
                     const res = await fetch('/api/admin/check-update', { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
-                    if (res.ok) { const d = await res.json(); this.updateAvailable = d.update_available; }
+                    const d = await res.json().catch(() => ({}));
+                    if (d.current_version) this.updateInfo.current_version = d.current_version;
+                    if (d.latest_version)  this.updateInfo.latest_version  = d.latest_version;
+                    if (d.docker_image)    this.updateInfo.docker_image    = d.docker_image;
+                    if (res.ok) { this.updateAvailable = d.update_available; }
                 } catch(e) {}
+            },
+
+            plainUpdateCommand() {
+                const image = this.updateInfo.docker_image || 'yidirk/formto';
+                const tag = this.updateInfo.latest_version || 'latest';
+                return `docker pull ${image}:${tag}
+docker stop formto
+docker rm formto
+docker run -d --name formto -p 3000:3000 \\
+  -e ADMIN_PASSWORD=VOTRE_MOT_DE_PASSE \\
+  -v ./data:/app/data \\
+  ${image}:${tag}`;
             },
 
             addToast(type, title, message) {
@@ -1617,13 +1773,71 @@ headers: { <span class="str">'Origin'</span>: <span class="str">'https://monsite
                 }
             },
 
+            // ── Fournisseur SMTP rapide ──
+            applyProvider() {
+                const presets = {
+                    gmail:   { host: 'smtp.gmail.com', port: 587 },
+                    outlook: { host: 'smtp.office365.com', port: 587 },
+                    yahoo:   { host: 'smtp.mail.yahoo.com', port: 587 }
+                };
+                const preset = presets[this.smtpProvider];
+                if (preset) {
+                    this.form.smtp_host = preset.host;
+                    this.form.smtp_port = preset.port;
+                }
+            },
+            providerHelpUrl() {
+                const urls = {
+                    gmail:   'https://myaccount.google.com/apppasswords',
+                    outlook: 'https://support.microsoft.com/en-us/account-billing/using-app-passwords-with-apps-that-don-t-support-two-step-verification-5896ed9b-4263-e681-128a-a6f2979a7944',
+                    yahoo:   'https://help.yahoo.com/kb/generate-manage-third-party-passwords-sln15241.html'
+                };
+                return urls[this.smtpProvider] || '#';
+            },
+
             // ── Newsletter ──
             async loadNewsletterSubs() {
-                if (!this.newsletterKeyId) { this.newsletterSubs = []; return; }
+                if (!this.newsletterKeyId) { this.newsletterSubs = []; this.campaigns = []; return; }
                 try {
                     const res = await fetch(`/api/admin/newsletter/${this.newsletterKeyId}`, { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
                     if (res.ok) { const d = await res.json(); this.newsletterSubs = d.subscribers; }
                 } catch(e) { console.error(e); }
+                this.loadCampaigns();
+            },
+
+            async loadCampaigns() {
+                if (!this.newsletterKeyId) { this.campaigns = []; return; }
+                try {
+                    const res = await fetch(`/api/admin/newsletter/${this.newsletterKeyId}/campaigns`, { headers: { 'Authorization': `Bearer ${this.adminPassword}` } });
+                    if (res.ok) { const d = await res.json(); this.campaigns = d.campaigns; }
+                } catch(e) { console.error(e); }
+            },
+
+            async sendCampaign() {
+                if (!this.newsletterKeyId || this.newsletterSubs.length === 0) return;
+                if (!this.campaignForm.subject.trim()) return this.addToast('error', this.t('toast.error'), this.t('newsletter.campaign_subject_required'));
+                if (!this.campaignForm.text.trim() && !this.campaignForm.html.trim()) return this.addToast('error', this.t('toast.error'), this.t('newsletter.campaign_content_required'));
+                if (!confirm(`${this.t('newsletter.campaign_confirm')} (${this.newsletterSubs.length})`)) return;
+
+                this.campaignSending = true;
+                try {
+                    const res = await fetch(`/api/admin/newsletter/${this.newsletterKeyId}/campaigns`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.adminPassword}` },
+                        body: JSON.stringify({ ...this.campaignForm, base_url: window.location.origin })
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        this.addToast('success', this.t('newsletter.campaign_sent_toast'), `${data.sent_count} ${this.t('newsletter.campaign_sent')} / ${data.failed_count} ${this.t('newsletter.campaign_failed')}`);
+                        this.campaignForm = { subject: '', text: '', html: '' };
+                        this.loadCampaigns();
+                    } else {
+                        this.addToast('error', this.t('toast.error'), data.error || '');
+                    }
+                } catch(e) {
+                    this.addToast('error', this.t('toast.error'), this.t('toast.server_error'));
+                }
+                this.campaignSending = false;
             },
 
             async exportNewsletter(evt) {

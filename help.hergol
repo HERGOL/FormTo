@@ -1,0 +1,1 @@
+docker build --build-arg APP_VERSION=v1.4 -t yidirk/formto:v1.4 -t yidirk/formto:latest .

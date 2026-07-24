@@ -3,6 +3,7 @@ require 'sqlite3'
 require 'mail'
 require 'json'
 require 'securerandom'
+require 'fileutils'
 require 'dotenv/load' if ENV['RACK_ENV'] != 'production'
 require 'rack/cors'
 require 'rack/utils'
@@ -71,7 +72,25 @@ end
 # ─────────────────────────────────────────
 #  Base de données SQLite
 # ─────────────────────────────────────────
-DB_PATH = File.join(File.dirname(__FILE__), 'data.db')
+# IMPORTANT: le fichier data.db vit dans DATA_DIR, PAS dans le dossier
+# de l'application. Quand vous mettez à jour l'image (nouveau code),
+# le contenu de /app est remplacé — mais si DATA_DIR pointe vers un
+# volume monté (ex: ./data:/app/data), la base survit à la mise à jour.
+# Par défaut DATA_DIR=/app/data ; à monter en volume dans docker-compose.
+DATA_DIR = ENV.fetch('DATA_DIR', File.join(File.dirname(__FILE__), 'data'))
+FileUtils.mkdir_p(DATA_DIR) unless Dir.exist?(DATA_DIR)
+DB_PATH = File.join(DATA_DIR, 'data.db')
+
+# Migration automatique : les versions précédentes stockaient data.db
+# directement dans le dossier de l'app (non persistant entre mises à
+# jour). Si on trouve une ancienne base à cet emplacement et qu'aucune
+# base n'existe encore dans DATA_DIR, on la déplace une seule fois.
+OLD_DB_PATH = File.join(File.dirname(__FILE__), 'data.db')
+if File.exist?(OLD_DB_PATH) && !File.exist?(DB_PATH)
+  FileUtils.mv(OLD_DB_PATH, DB_PATH)
+  puts "[migration] Ancienne base trouvée en #{OLD_DB_PATH} → déplacée vers #{DB_PATH}"
+end
+
 DB = SQLite3::Database.new(DB_PATH)
 DB.results_as_hash = true
 
@@ -136,17 +155,34 @@ DB.execute_batch <<-SQL
     ON rate_limit_hits(scope, hit_at);
 
   CREATE TABLE IF NOT EXISTS newsletter_subscribers (
-    id          TEXT PRIMARY KEY,
-    api_key_id  TEXT NOT NULL,
-    email       TEXT NOT NULL,
-    ip          TEXT,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    id                 TEXT PRIMARY KEY,
+    api_key_id         TEXT NOT NULL,
+    email              TEXT NOT NULL,
+    ip                 TEXT,
+    unsubscribe_token  TEXT,
+    created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(api_key_id, email),
     FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_newsletter_key
     ON newsletter_subscribers(api_key_id);
+
+  CREATE TABLE IF NOT EXISTS newsletter_campaigns (
+    id           TEXT PRIMARY KEY,
+    api_key_id   TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    html         TEXT,
+    text         TEXT,
+    status       TEXT DEFAULT 'sent',
+    sent_count   INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_campaigns_key
+    ON newsletter_campaigns(api_key_id);
 SQL
 
 # Migrations idempotentes
@@ -160,6 +196,10 @@ rescue SQLite3::Exception
 end
 begin
   DB.execute('ALTER TABLE api_keys ADD COLUMN notification_email TEXT')
+rescue SQLite3::Exception
+end
+begin
+  DB.execute('ALTER TABLE newsletter_subscribers ADD COLUMN unsubscribe_token TEXT')
 rescue SQLite3::Exception
 end
 
@@ -646,8 +686,8 @@ post '/api/subscribe' do
 
   begin
     DB.execute(
-      'INSERT INTO newsletter_subscribers (id, api_key_id, email, ip) VALUES (?, ?, ?, ?)',
-      [SecureRandom.uuid, @key_config['id'], email, request.ip]
+      'INSERT INTO newsletter_subscribers (id, api_key_id, email, ip, unsubscribe_token) VALUES (?, ?, ?, ?, ?)',
+      [SecureRandom.uuid, @key_config['id'], email, request.ip, SecureRandom.hex(20)]
     )
     LOGGER.info("Newsletter: nouvel abonné | Tenant: #{@key_config['name']}")
     log_request(status: 'success', recipient: email, subject: '[newsletter] inscription')
@@ -661,6 +701,36 @@ post '/api/subscribe' do
   end
 
   json_response({ success: true, message: 'Inscription confirmée.' })
+end
+
+# ─────────────────────────────────────────
+#  GET /api/unsubscribe/:token — Désinscription newsletter
+# ─────────────────────────────────────────
+# Route publique, sans authentification : le token à lui seul identifie
+# l'abonné (assez long et aléatoire pour ne pas être devinable). Utilisée
+# depuis le lien "se désinscrire" présent dans chaque campagne envoyée.
+get '/api/unsubscribe/:token' do
+  sub = DB.get_first_row(
+    'SELECT * FROM newsletter_subscribers WHERE unsubscribe_token = ?',
+    [params[:token]]
+  )
+
+  content_type 'text/html; charset=utf-8'
+
+  unless sub
+    halt 404, <<~HTML
+      <!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
+      <h2>Lien invalide</h2><p>Ce lien de désinscription n'est plus valide.</p></body></html>
+    HTML
+  end
+
+  DB.execute('DELETE FROM newsletter_subscribers WHERE id = ?', [sub['id']])
+  LOGGER.info("Newsletter: désinscription | #{sub['email']}")
+
+  <<~HTML
+    <!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px">
+    <h2>✅ Désinscription confirmée</h2><p>Vous ne recevrez plus d'emails de cette liste.</p></body></html>
+  HTML
 end
 
 # ─────────────────────────────────────────
@@ -825,6 +895,93 @@ delete '/api/admin/newsletter/:id' do
 end
 
 # ─────────────────────────────────────────
+#  Routes Admin — Campagnes newsletter
+# ─────────────────────────────────────────
+get '/api/admin/newsletter/:key_id/campaigns' do
+  admin_auth!
+  campaigns = DB.execute(
+    'SELECT id, subject, status, sent_count, failed_count, created_at FROM newsletter_campaigns WHERE api_key_id = ? ORDER BY created_at DESC',
+    params[:key_id]
+  )
+  json_response({ campaigns: campaigns })
+end
+
+post '/api/admin/newsletter/:key_id/campaigns' do
+  admin_auth!
+  request.body.rewind
+  data = JSON.parse(request.body.read) rescue {}
+
+  key = DB.get_first_row('SELECT * FROM api_keys WHERE id = ?', params[:key_id])
+  halt 404, json_response({ error: 'Projet introuvable' }, 404) unless key
+
+  subject = sanitize_header_value(data['subject'], max_len: 250)
+  html    = data['html'].to_s.strip
+  text    = data['text'].to_s.strip
+
+  if subject.nil? || subject.empty?
+    halt 400, json_response({ error: 'Sujet requis' }, 400)
+  end
+  if html.empty? && text.empty?
+    halt 400, json_response({ error: 'Contenu requis (texte ou HTML)' }, 400)
+  end
+
+  subscribers = DB.execute(
+    'SELECT * FROM newsletter_subscribers WHERE api_key_id = ?',
+    [params[:key_id]]
+  )
+
+  campaign_id = SecureRandom.uuid
+  sent_count   = 0
+  failed_count = 0
+
+  base_url = data['base_url'].to_s.strip
+  base_url = request.base_url if base_url.empty?
+
+  subscribers.each do |sub|
+    unsubscribe_url = "#{base_url}/api/unsubscribe/#{sub['unsubscribe_token']}"
+    footer_html = "<p style=\"font-size:11px;color:#999;margin-top:24px\">" \
+      "<a href=\"#{unsubscribe_url}\" style=\"color:#999\">Se désinscrire</a></p>"
+    footer_text = "\n\n---\nSe désinscrire : #{unsubscribe_url}"
+
+    begin
+      message = Mail.new do
+        from    "#{sanitize_header_value(key['smtp_from_name'])} <#{key['smtp_from_email']}>"
+        to      sub['email']
+        subject subject
+        text_part { body(text.empty? ? nil : text + footer_text) } unless text.empty?
+        html_part { content_type 'text/html; charset=UTF-8'; body(html.empty? ? nil : html + footer_html) } unless html.empty?
+      end
+
+      message.delivery_method :smtp, {
+        address:              key['smtp_host'],
+        port:                 key['smtp_port'],
+        user_name:            key['smtp_user'],
+        password:             key['smtp_pass'],
+        authentication:       :plain,
+        enable_starttls_auto: true,
+        open_timeout:         10,
+        read_timeout:         20
+      }
+
+      message.deliver!
+      sent_count += 1
+    rescue => e
+      LOGGER.error("Campagne: échec envoi à #{sub['email']} | #{e.message}")
+      failed_count += 1
+    end
+  end
+
+  DB.execute(
+    'INSERT INTO newsletter_campaigns (id, api_key_id, subject, html, text, status, sent_count, failed_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [campaign_id, params[:key_id], subject, html, text, 'sent', sent_count, failed_count]
+  )
+
+  LOGGER.info("Campagne envoyée | Projet: #{key['name']} | #{sent_count} envoyés, #{failed_count} échecs")
+  json_response({ success: true, sent_count: sent_count, failed_count: failed_count })
+end
+
+# ─────────────────────────────────────────
 #  Routes Admin — Domaines expéditeur email
 # ─────────────────────────────────────────
 post '/api/admin/domains' do
@@ -953,7 +1110,11 @@ end
 # ─────────────────────────────────────────
 #  Check Update
 # ─────────────────────────────────────────
-CURRENT_VERSION = 'v1.3'.freeze
+# La version courante est injectée au build de l'image Docker via
+# --build-arg APP_VERSION=v1.4 (voir Dockerfile), plutôt que codée en
+# dur ici — ça évite d'oublier de mettre à jour cette constante à
+# chaque release. En dev sans build-arg, retombe sur 'dev'.
+CURRENT_VERSION = ENV.fetch('APP_VERSION', 'dev').freeze
 DOCKER_IMAGE    = 'yidirk/formto'.freeze
 UPDATE_CACHE_FILE = '/tmp/formto_update_cache.json'.freeze
 
@@ -984,7 +1145,8 @@ def check_update_once
   result = {
     update_available: latest && (latest.gsub(/\Av/, '').split('.').map(&:to_i) <=> CURRENT_VERSION.gsub(/\Av/, '').split('.').map(&:to_i)) == 1,
     current_version:  CURRENT_VERSION,
-    latest_version:   latest
+    latest_version:   latest,
+    docker_image:     DOCKER_IMAGE
   }
 
   File.write(UPDATE_CACHE_FILE, result.to_json)

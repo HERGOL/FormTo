@@ -22,7 +22,7 @@ COPY . .
 
 EXPOSE ${PORT:-3000}
 
-ARG APP_VERSION=v1.3
-ENV APP_VERSION=$APP_VERSION
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 
 CMD ["bundle", "exec", "puma", "-C", "config/puma.rb", "config.ru"]
