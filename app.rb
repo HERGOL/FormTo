@@ -5,6 +5,7 @@ require 'json'
 require 'securerandom'
 require 'dotenv/load' if ENV['RACK_ENV'] != 'production'
 require 'rack/cors'
+require 'rack/utils'
 require 'logger'
 
 # ─────────────────────────────────────────
@@ -34,11 +35,37 @@ end
 # ─────────────────────────────────────────
 #  CORS
 # ─────────────────────────────────────────
+# NB: '*' reste correct ici car /api/send est protégé par clé API + origine,
+# et les routes /api/admin/* nécessitent le mot de passe admin en header
+# Authorization (un site tiers ne peut pas le connaître, donc CORS large
+# sur ces routes n'expose rien de sensible).
 use Rack::Cors do
   allow do
     origins '*'
     resource '*', headers: :any, methods: [:get, :post, :put, :delete, :options]
   end
+end
+
+# ─────────────────────────────────────────
+#  Limite de taille du corps de requête (anti-abus / anti-DoS basique)
+# ─────────────────────────────────────────
+MAX_BODY_BYTES = 200_000 # 200 Ko, largement suffisant pour un formulaire de contact
+
+before do
+  cl = request.content_length.to_i
+  if cl > MAX_BODY_BYTES
+    LOGGER.warn("Corps trop volumineux (#{cl} octets) | IP: #{request.ip} | #{request.path_info}")
+    halt 413, { error: 'Corps de requête trop volumineux.' }.to_json
+  end
+end
+
+# ─────────────────────────────────────────
+#  Headers de sécurité de base sur toutes les réponses
+# ─────────────────────────────────────────
+after do
+  headers['X-Content-Type-Options'] = 'nosniff'
+  headers['X-Frame-Options']        = 'DENY'
+  headers['Referrer-Policy']        = 'no-referrer'
 end
 
 # ─────────────────────────────────────────
@@ -54,34 +81,32 @@ DB.execute('PRAGMA journal_mode = WAL')
 
 DB.execute_batch <<-SQL
   CREATE TABLE IF NOT EXISTS api_keys (
-    id              TEXT PRIMARY KEY,
-    name            TEXT,
-    api_key         TEXT UNIQUE,
-    smtp_host       TEXT,
-    smtp_port       INTEGER,
-    smtp_user       TEXT,
-    smtp_pass       TEXT,
-    smtp_from_email TEXT,
-    smtp_from_name  TEXT,
-    -- Rate limit par clé : max requêtes sur la fenêtre (NULL = désactivé)
-    rate_limit_max  INTEGER DEFAULT NULL,
-    -- Fenêtre glissante en secondes (défaut 3600 = 1h)
-    rate_limit_window INTEGER DEFAULT 3600,
-    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+    id                  TEXT PRIMARY KEY,
+    name                TEXT,
+    api_key             TEXT UNIQUE,
+    smtp_host           TEXT,
+    smtp_port           INTEGER,
+    smtp_user           TEXT,
+    smtp_pass           TEXT,
+    smtp_from_email     TEXT,
+    smtp_from_name      TEXT,
+    -- Adresse qui RECOIT les mails envoyés via cette clé.
+    -- Configurée UNIQUEMENT depuis le dashboard admin : le formulaire
+    -- client ne peut jamais choisir le destinataire (anti relai ouvert).
+    notification_email  TEXT,
+    rate_limit_max       INTEGER DEFAULT NULL,
+    rate_limit_window    INTEGER DEFAULT 3600,
+    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Origines HTTP autorisées à utiliser la clé (ex: https://monsite.com)
-  -- Si aucune entrée pour une clé → clé utilisable depuis n'importe quelle origine (mode serveur)
-  -- Si au moins une entrée → seules ces origines sont acceptées (mode browser public)
   CREATE TABLE IF NOT EXISTS allowed_origins (
     id         TEXT PRIMARY KEY,
     api_key_id TEXT,
-    origin     TEXT NOT NULL,   -- ex: https://monsite.com  (sans slash final)
-    label      TEXT,            -- nom lisible optionnel
+    origin     TEXT NOT NULL,
+    label      TEXT,
     FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
   );
 
-  -- Garde la table allowed_domains pour compatibilité ascendante (domaines expéditeur email)
   CREATE TABLE IF NOT EXISTS allowed_domains (
     id         TEXT PRIMARY KEY,
     api_key_id TEXT,
@@ -101,18 +126,30 @@ DB.execute_batch <<-SQL
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Fenêtre glissante pour le rate limiting (nettoyée automatiquement)
   CREATE TABLE IF NOT EXISTS rate_limit_hits (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    scope      TEXT NOT NULL,   -- 'global' ou l'api_key_id
+    scope      TEXT NOT NULL,
     hit_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE INDEX IF NOT EXISTS idx_rate_hits_scope_time
     ON rate_limit_hits(scope, hit_at);
+
+  CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+    id          TEXT PRIMARY KEY,
+    api_key_id  TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    ip          TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(api_key_id, email),
+    FOREIGN KEY(api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_newsletter_key
+    ON newsletter_subscribers(api_key_id);
 SQL
 
-# Migrations : ajouter les colonnes rate limit si elles n'existent pas (idempotent)
+# Migrations idempotentes
 begin
   DB.execute('ALTER TABLE api_keys ADD COLUMN rate_limit_max INTEGER DEFAULT NULL')
 rescue SQLite3::Exception
@@ -121,8 +158,11 @@ begin
   DB.execute('ALTER TABLE api_keys ADD COLUMN rate_limit_window INTEGER DEFAULT 3600')
 rescue SQLite3::Exception
 end
+begin
+  DB.execute('ALTER TABLE api_keys ADD COLUMN notification_email TEXT')
+rescue SQLite3::Exception
+end
 
-# Créer allowed_origins si migration depuis une ancienne version
 DB.execute_batch <<-SQL
   CREATE TABLE IF NOT EXISTS allowed_origins (
     id         TEXT PRIMARY KEY,
@@ -141,32 +181,20 @@ LOGGER.info("Clés chargées  → #{DB.execute('SELECT count(*) FROM api_keys').
 # ─────────────────────────────────────────
 #  Rate Limiting — Fenêtre glissante
 # ─────────────────────────────────────────
-#
-#  Deux niveaux :
-#   1. GLOBAL   : ENV['RATE_LIMIT_GLOBAL_MAX'] req / ENV['RATE_LIMIT_GLOBAL_WINDOW'] sec
-#                 Protège le serveur toutes clés confondues.
-#   2. PAR CLÉ  : rate_limit_max / rate_limit_window définis dans api_keys.
-#                 NULL = illimité pour cette clé.
-#
-GLOBAL_RATE_MAX    = ENV.fetch('RATE_LIMIT_GLOBAL_MAX',    '1000').to_i   # 1000 req
-GLOBAL_RATE_WINDOW = ENV.fetch('RATE_LIMIT_GLOBAL_WINDOW', '3600').to_i   # par heure
+GLOBAL_RATE_MAX    = ENV.fetch('RATE_LIMIT_GLOBAL_MAX',    '1000').to_i
+GLOBAL_RATE_WINDOW = ENV.fetch('RATE_LIMIT_GLOBAL_WINDOW', '3600').to_i
 
-# Mutex pour éviter les race conditions sur le comptage
 RATE_MUTEX = Mutex.new
 
-# Compte les hits dans la fenêtre et insère le nouveau hit si sous la limite.
-# Retourne [autorisé (bool), hits_actuels, limite, fenêtre_sec]
 def check_and_record_rate_limit(scope, max_requests, window_seconds)
   return [true, 0, nil, nil] if max_requests.nil? || max_requests <= 0
 
   RATE_MUTEX.synchronize do
-    # Nettoyer les vieilles entrées (hors fenêtre)
     DB.execute(
       "DELETE FROM rate_limit_hits WHERE scope = ? AND hit_at < datetime('now', ? || ' seconds')",
       [scope, (-window_seconds).to_s]
     )
 
-    # Compter les hits dans la fenêtre courante
     current = DB.execute(
       "SELECT count(*) FROM rate_limit_hits WHERE scope = ? AND hit_at >= datetime('now', ? || ' seconds')",
       [scope, (-window_seconds).to_s]
@@ -174,7 +202,6 @@ def check_and_record_rate_limit(scope, max_requests, window_seconds)
 
     allowed = current < max_requests
 
-    # Enregistrer le hit seulement si autorisé
     if allowed
       DB.execute(
         "INSERT INTO rate_limit_hits (scope, hit_at) VALUES (?, CURRENT_TIMESTAMP)",
@@ -189,12 +216,65 @@ end
 # ─────────────────────────────────────────
 #  Helpers
 # ─────────────────────────────────────────
+
+# Format email simple mais strict (une seule adresse, pas de CR/LF, pas de virgule)
+EMAIL_REGEX = /\A[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\z/
+
 helpers do
 
+  def valid_email?(email)
+    email.is_a?(String) && !email.include?("\n") && !email.include?("\r") &&
+      email.match?(EMAIL_REGEX)
+  end
+
+  # Empêche l'injection d'en-têtes SMTP (CRLF injection) même si la gem
+  # `mail` encode déjà proprement les champs — défense en profondeur.
+  def sanitize_header_value(str, max_len: 500)
+    return nil if str.nil?
+    str.to_s.gsub(/[\r\n]+/, ' ').strip[0, max_len]
+  end
+
+  # Protection anti brute-force sur le mot de passe admin : au-delà de
+  # ADMIN_LOGIN_MAX_FAILS échecs pour une IP donnée sur la fenêtre, les
+  # tentatives suivantes sont bloquées (429), même avec le bon mot de
+  # passe, le temps que la fenêtre expire.
+  ADMIN_LOGIN_MAX_FAILS   = ENV.fetch('ADMIN_LOGIN_MAX_FAILS', '10').to_i
+  ADMIN_LOGIN_FAIL_WINDOW = ENV.fetch('ADMIN_LOGIN_FAIL_WINDOW', '300').to_i
+
+  def admin_login_blocked?(ip)
+    scope = "admin_fail:#{ip}"
+    DB.execute(
+      "DELETE FROM rate_limit_hits WHERE scope = ? AND hit_at < datetime('now', ? || ' seconds')",
+      [scope, (-ADMIN_LOGIN_FAIL_WINDOW).to_s]
+    )
+    count = DB.execute(
+      "SELECT count(*) FROM rate_limit_hits WHERE scope = ? AND hit_at >= datetime('now', ? || ' seconds')",
+      [scope, (-ADMIN_LOGIN_FAIL_WINDOW).to_s]
+    ).first[0].to_i
+    count >= ADMIN_LOGIN_MAX_FAILS
+  end
+
+  def record_admin_login_failure(ip)
+    DB.execute(
+      "INSERT INTO rate_limit_hits (scope, hit_at) VALUES (?, CURRENT_TIMESTAMP)",
+      ["admin_fail:#{ip}"]
+    )
+  end
+
   def admin_auth!
-    header = request.env['HTTP_AUTHORIZATION']
-    unless header == "Bearer #{ENV['ADMIN_PASSWORD']}"
-      LOGGER.warn("Auth admin échouée | IP: #{request.ip} | Header: #{header.inspect}")
+    ip = request.ip
+
+    if admin_login_blocked?(ip)
+      LOGGER.warn("Admin bloqué (trop de tentatives échouées) | IP: #{ip}")
+      halt 429, json_response({ error: "Trop de tentatives échouées. Réessayez dans #{ADMIN_LOGIN_FAIL_WINDOW / 60} minutes." }, 429)
+    end
+
+    header   = request.env['HTTP_AUTHORIZATION']
+    expected = "Bearer #{ENV['ADMIN_PASSWORD']}"
+
+    unless header && ENV['ADMIN_PASSWORD'] && header.bytesize == expected.bytesize && Rack::Utils.secure_compare(header, expected)
+      record_admin_login_failure(ip)
+      LOGGER.warn("Auth admin échouée | IP: #{ip}")
       halt 401, json_response({ error: 'Non autorisé' }, 401)
     end
   end
@@ -217,17 +297,14 @@ helpers do
     )
 
     unless @key_config
-      LOGGER.warn("Clé API invalide | IP: #{request.ip} | Clé: #{api_key}")
+      LOGGER.warn("Clé API invalide | IP: #{request.ip}")
       halt 403, json_response({ error: 'Clé API invalide' }, 403)
     end
 
     LOGGER.debug("Auth OK | Tenant: #{@key_config['name']}")
   end
 
-  # Vérifie le rate limit global puis celui de la clé.
-  # Doit être appelé APRÈS api_key_auth!
   def check_rate_limits!
-    # 1. Rate limit global
     allowed, current, max, window = check_and_record_rate_limit(
       'global', GLOBAL_RATE_MAX, GLOBAL_RATE_WINDOW
     )
@@ -249,7 +326,6 @@ helpers do
                               }, 429)
     end
 
-    # 2. Rate limit par clé API (si configuré)
     key_max    = @key_config['rate_limit_max']
     key_window = @key_config['rate_limit_window'] || 3600
 
@@ -275,7 +351,6 @@ helpers do
                                 }, 429)
       end
 
-      # Ajouter les headers informatifs si sous la limite
       headers(
         'X-RateLimit-Scope'     => 'key',
         'X-RateLimit-Limit'     => max.to_s,
@@ -310,48 +385,30 @@ helpers do
     LOGGER.error("Impossible d'écrire le log de requête | #{e.message}")
   end
 
-  # Extrait proprement le domaine d'une adresse email
-  # Gère "Nom <email@domain.com>" et "email@domain.com"
   def extract_domain(email_str)
     return nil unless email_str
     addr = email_str.match(/<([^>]+)>/)&.captures&.first || email_str
     addr.strip.split('@').last&.downcase
   end
 
-  # ── Vérification de l'origine HTTP ──────────────────────────────
-  # Vérifie si la requête vient d'une origine autorisée pour cette clé.
-  #
-  # Logique :
-  #   • Si la clé n'a AUCUNE origine configurée → accès libre (usage serveur-à-serveur).
-  #   • Si la clé a au moins une origine → seules ces origines sont acceptées.
-  #   • Les requêtes sans header Origin/Referer sont refusées si la clé a des origines.
-  #
-  # Normalisation : on compare l'origin sans slash final et en minuscules.
-  # Support wildcards : "*.monsite.com" accepte n'importe quel sous-domaine.
   def check_origin!
-    # Compter les origines configurées pour cette clé
     origins_count = DB.execute(
       'SELECT count(*) FROM allowed_origins WHERE api_key_id = ?',
       [@key_config['id']]
     ).first[0].to_i
 
-    # Aucune restriction → on laisse passer (usage backend/serveur)
     return if origins_count == 0
 
-    # Lire l'origine de la requête (Origin prioritaire, Referer en fallback)
     request_origin = request.env['HTTP_ORIGIN']
 
-    # Fallback sur Referer si Origin absent (certains navigateurs/libs)
     if request_origin.nil? || request_origin.empty?
       referer = request.env['HTTP_REFERER']
       if referer && !referer.empty?
-        # Extraire scheme://host(:port) depuis le Referer
         uri = URI.parse(referer) rescue nil
         request_origin = "#{uri.scheme}://#{uri.host}#{uri.port && ![80,443].include?(uri.port) ? ":#{uri.port}" : ''}" if uri
       end
     end
 
-    # Pas d'origine du tout et clé restreinte → refus
     unless request_origin && !request_origin.empty?
       msg = "Origine absente | Tenant: #{@key_config['name']}"
       LOGGER.warn(msg)
@@ -362,10 +419,8 @@ helpers do
                               }, 403)
     end
 
-    # Normaliser l'origine reçue
     normalized_request = normalize_origin(request_origin)
 
-    # Chercher une correspondance dans la liste blanche
     allowed_origins = DB.execute(
       'SELECT origin FROM allowed_origins WHERE api_key_id = ?',
       [@key_config['id']]
@@ -386,19 +441,14 @@ helpers do
     LOGGER.debug("Origine autorisée: #{request_origin} | Tenant: #{@key_config['name']}")
   end
 
-  # Normalise une origine : minuscules, sans slash final
   def normalize_origin(origin)
     origin.to_s.strip.downcase.chomp('/')
   end
 
-  # Vérifie si l'origine de la requête correspond à un pattern autorisé.
-  # Supporte les wildcards : "https://*.monsite.com" accepte tout sous-domaine.
   def origin_matches?(request_origin, allowed_pattern)
     return true if request_origin == allowed_pattern
 
-    # Support wildcard *.domain.com
     if allowed_pattern.include?('*')
-      # Convertir le pattern glob en regex
       regex_str = Regexp.escape(allowed_pattern).gsub('\*', '[^.]+')
       return request_origin.match?(/\A#{regex_str}\z/)
     end
@@ -437,27 +487,48 @@ post '/api/send' do
     halt 400, json_response({ error: 'Corps JSON invalide' }, 400)
   end
 
-  to      = payload['to']
-  subject = payload['subject']
-  text    = payload['text']
-  html    = payload['html']
-  from    = payload['from']
+  # ── Destinataire : JAMAIS fourni par le client. ──────────────────
+  # Il est fixé une fois pour toutes dans le dashboard admin, par clé API.
+  # Ainsi, même si la clé fuite ou que l'origine est mal configurée,
+  # personne ne peut détourner FormTo pour spammer un tiers.
+  to = @key_config['notification_email']
 
-  unless to && subject
-    msg = "Champs manquants: to=#{to.inspect} subject=#{subject.inspect}"
+  unless valid_email?(to)
+    msg = "Aucun email destinataire valide configuré pour cette clé"
+    LOGGER.error("#{msg} | Tenant: #{@key_config['name']}")
+    log_request(status: 'error', error_msg: msg)
+    halt 500, json_response({
+                              error: "Cette clé API n'a pas d'email destinataire configuré. Configurez-le dans le dashboard admin.",
+                              code:  'NOTIFICATION_EMAIL_MISSING'
+                            }, 500)
+  end
+
+  subject  = sanitize_header_value(payload['subject'], max_len: 250)
+  text     = payload['text'].to_s[0, 200_000] if payload['text']
+  html     = payload['html'].to_s[0, 200_000] if payload['html']
+  from_raw = payload['from']
+
+  if subject.nil? || subject.empty?
+    msg = "Champ manquant: subject"
+    LOGGER.warn(msg)
+    log_request(status: 'error', error_msg: msg, recipient: to)
+    halt 400, json_response({ error: 'Sujet requis' }, 400)
+  end
+
+  unless text || html
+    msg = "Aucun contenu (text ou html) fourni"
     LOGGER.warn(msg)
     log_request(status: 'error', error_msg: msg, recipient: to, subject: subject)
-    halt 400, json_response({ error: 'Destinataire et sujet requis' }, 400)
+    halt 400, json_response({ error: 'Contenu du message requis (text ou html)' }, 400)
   end
 
   # Résoudre l'adresse expéditrice finale
-  from_email      = from || @key_config['smtp_from_email']
+  from_email      = from_raw && valid_email?(sanitize_header_value(from_raw)) ? sanitize_header_value(from_raw) : @key_config['smtp_from_email']
   from_domain     = extract_domain(from_email)
   config_domain   = extract_domain(@key_config['smtp_from_email'])
   is_own_domain   = (from_domain == config_domain)
 
   unless is_own_domain
-    # Chercher ce domaine dans la liste blanche de la clé
     allowed = DB.get_first_row(
       'SELECT * FROM allowed_domains WHERE api_key_id = ? AND LOWER(domain) = LOWER(?)',
       [@key_config['id'], from_domain]
@@ -474,28 +545,34 @@ post '/api/send' do
     end
   end
 
+  # reply_to est optionnel et sans risque : il ne change jamais le
+  # destinataire réel du mail, seulement l'adresse pré-remplie en cas
+  # de réponse (pratique pour un formulaire de contact).
+  reply_to = payload['reply_to']
+  reply_to = sanitize_header_value(reply_to)
+  reply_to = nil unless reply_to && valid_email?(reply_to)
+
   LOGGER.info("Envoi | #{from_email} → #{to} | \"#{subject}\" | Tenant: #{@key_config['name']}")
 
   begin
     smtp_from_name        = @key_config['smtp_from_name']
-    smtp_from_email_cfg   = @key_config['smtp_from_email']
-    smtp_host             = @key_config['smtp_host']
-    smtp_port             = @key_config['smtp_port']
-    smtp_user             = @key_config['smtp_user']
-    smtp_pass             = @key_config['smtp_pass']
+    smtp_from_email_cfg    = @key_config['smtp_from_email']
+    smtp_host              = @key_config['smtp_host']
+    smtp_port               = @key_config['smtp_port']
+    smtp_user               = @key_config['smtp_user']
+    smtp_pass                = @key_config['smtp_pass']
 
-    # Construire l'expéditeur : si from fourni, utiliser tel quel ;
-    # sinon reconstruire avec le nom configuré
-    display_from = if from && from != smtp_from_email_cfg
-                     from  # L'appelant a fourni un from complet ou une adresse d'un domaine autorisé
+    display_from = if from_raw && from_email != smtp_from_email_cfg
+                     from_email
                    else
-                     "#{smtp_from_name} <#{smtp_from_email_cfg}>"
+                     "#{sanitize_header_value(smtp_from_name)} <#{smtp_from_email_cfg}>"
                    end
 
     message = Mail.new do
-      from    display_from
-      to      to
-      subject subject
+      from     display_from
+      to       to
+      subject  subject
+      reply_to reply_to if reply_to
       text_part { body text } if text
       html_part { content_type 'text/html; charset=UTF-8'; body html } if html
     end
@@ -506,7 +583,9 @@ post '/api/send' do
       user_name:            smtp_user,
       password:             smtp_pass,
       authentication:       :plain,
-      enable_starttls_auto: true
+      enable_starttls_auto: true,
+      open_timeout:         10,
+      read_timeout:         20
     }
 
     message.deliver!
@@ -544,11 +623,57 @@ post '/api/send' do
 end
 
 # ─────────────────────────────────────────
+#  POST /api/subscribe — Inscription newsletter
+# ─────────────────────────────────────────
+# Réutilise les mêmes protections que /api/send : clé API valide,
+# origine autorisée (si configurée) et rate limiting. L'email n'est
+# jamais renvoyé publiquement et les doublons ne sont pas signalés
+# (pour éviter l'énumération d'adresses déjà inscrites).
+post '/api/subscribe' do
+  api_key_auth!
+  check_origin!
+  check_rate_limits!
+
+  request.body.rewind
+  payload = JSON.parse(request.body.read) rescue {}
+
+  email = payload['email'].to_s.strip.downcase
+
+  unless valid_email?(email)
+    log_request(status: 'error', error_msg: 'Email newsletter invalide', subject: '[newsletter]')
+    halt 400, json_response({ error: 'Adresse email invalide.' }, 400)
+  end
+
+  begin
+    DB.execute(
+      'INSERT INTO newsletter_subscribers (id, api_key_id, email, ip) VALUES (?, ?, ?, ?)',
+      [SecureRandom.uuid, @key_config['id'], email, request.ip]
+    )
+    LOGGER.info("Newsletter: nouvel abonné | Tenant: #{@key_config['name']}")
+    log_request(status: 'success', recipient: email, subject: '[newsletter] inscription')
+  rescue SQLite3::ConstraintException
+    # Déjà inscrit : on répond quand même succès, sans le préciser.
+    LOGGER.debug("Newsletter: email déjà inscrit | Tenant: #{@key_config['name']}")
+  rescue SQLite3::Exception => e
+    LOGGER.error("Erreur inscription newsletter | #{e.message}")
+    log_request(status: 'error', error_msg: "DB: #{e.message}", subject: '[newsletter]')
+    halt 500, json_response({ error: 'Erreur serveur, réessayez plus tard.' }, 500)
+  end
+
+  json_response({ success: true, message: 'Inscription confirmée.' })
+end
+
+# ─────────────────────────────────────────
 #  Routes Admin — Clés
 # ─────────────────────────────────────────
 get '/api/admin/config' do
   admin_auth!
-  keys    = DB.execute('SELECT id, name, api_key, smtp_from_email, smtp_from_name, rate_limit_max, rate_limit_window, created_at FROM api_keys')
+  keys = DB.execute(<<-SQL)
+    SELECT ak.id, ak.name, ak.api_key, ak.smtp_from_email, ak.smtp_from_name,
+           ak.notification_email, ak.rate_limit_max, ak.rate_limit_window, ak.created_at,
+           (SELECT COUNT(*) FROM newsletter_subscribers ns WHERE ns.api_key_id = ak.id) AS newsletter_count
+    FROM api_keys ak
+  SQL
   domains = DB.execute('SELECT id, api_key_id, domain FROM allowed_domains')
   origins = DB.execute('SELECT id, api_key_id, origin, label FROM allowed_origins ORDER BY api_key_id')
   LOGGER.info("Config admin lue | #{keys.length} clé(s) | #{origins.length} origine(s)")
@@ -569,19 +694,23 @@ post '/api/admin/keys' do
   id      = SecureRandom.uuid
   api_key = "pb_formto_#{SecureRandom.hex(16)}"
 
-  # rate_limit_max: nil = désactivé, entier = activé
   rate_max    = data['rate_limit_max'].to_s.empty? ? nil : data['rate_limit_max'].to_i
   rate_window = (data['rate_limit_window'] || 3600).to_i
 
+  notification_email = data['notification_email'].to_s.strip
+  unless valid_email?(notification_email)
+    halt 400, json_response({ error: "Email destinataire invalide ou manquant." }, 400)
+  end
+
   begin
     DB.execute(
-      'INSERT INTO api_keys (id, name, api_key, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name, rate_limit_max, rate_limit_window)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO api_keys (id, name, api_key, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name, notification_email, rate_limit_max, rate_limit_window)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, data['name'], api_key, data['smtp_host'], data['smtp_port'],
        data['smtp_user'], data['smtp_pass'], data['smtp_from_email'], data['smtp_from_name'],
-       rate_max, rate_window]
+       notification_email, rate_max, rate_window]
     )
-    LOGGER.info("Clé créée | #{data['name']} | ID: #{id} | Rate: #{rate_max || 'illimité'}/#{rate_window}s")
+    LOGGER.info("Clé créée | #{data['name']} | ID: #{id} | Destinataire: #{notification_email}")
     json_response({ success: true, api_key: api_key })
   rescue SQLite3::Exception => e
     LOGGER.error("Erreur création clé | #{e.message}")
@@ -597,14 +726,19 @@ put '/api/admin/keys/:id' do
   rate_max    = data['rate_limit_max'].to_s.empty? ? nil : data['rate_limit_max'].to_i
   rate_window = (data['rate_limit_window'] || 3600).to_i
 
+  notification_email = data['notification_email'].to_s.strip
+  unless valid_email?(notification_email)
+    halt 400, json_response({ error: "Email destinataire invalide ou manquant." }, 400)
+  end
+
   begin
     DB.execute(
-      'UPDATE api_keys SET name=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_from_email=?, smtp_from_name=?, rate_limit_max=?, rate_limit_window=? WHERE id=?',
+      'UPDATE api_keys SET name=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_from_email=?, smtp_from_name=?, notification_email=?, rate_limit_max=?, rate_limit_window=? WHERE id=?',
       [data['name'], data['smtp_host'], data['smtp_port'], data['smtp_user'],
        data['smtp_pass'], data['smtp_from_email'], data['smtp_from_name'],
-       rate_max, rate_window, params[:id]]
+       notification_email, rate_max, rate_window, params[:id]]
     )
-    LOGGER.info("Clé mise à jour | ID: #{params[:id]} | Rate: #{rate_max || 'illimité'}/#{rate_window}s")
+    LOGGER.info("Clé mise à jour | ID: #{params[:id]} | Destinataire: #{notification_email}")
     json_response({ success: true })
   rescue SQLite3::Exception => e
     LOGGER.error("Erreur MAJ clé | #{e.message}")
@@ -615,7 +749,6 @@ end
 delete '/api/admin/keys/:id' do
   admin_auth!
   DB.execute('DELETE FROM api_keys WHERE id = ?', params[:id])
-  # Nettoyer aussi les hits de rate limit pour cette clé
   DB.execute('DELETE FROM rate_limit_hits WHERE scope = ?', params[:id])
   LOGGER.warn("Clé supprimée | ID: #{params[:id]}")
   json_response({ success: true })
@@ -637,7 +770,6 @@ post '/api/admin/origins' do
   id   = SecureRandom.uuid
 
   raw_origin = data['origin'].to_s.strip
-  # Normaliser : forcer scheme si absent, supprimer slash final
   origin = raw_origin.match?(/\Ahttps?:\/\//) ? raw_origin.chomp('/') : "https://#{raw_origin.chomp('/')}"
   label  = data['label'].to_s.strip
 
@@ -662,14 +794,45 @@ delete '/api/admin/origins/:id' do
 end
 
 # ─────────────────────────────────────────
+#  Routes Admin — Newsletter
+# ─────────────────────────────────────────
+get '/api/admin/newsletter/:key_id' do
+  admin_auth!
+  subs = DB.execute(
+    'SELECT * FROM newsletter_subscribers WHERE api_key_id = ? ORDER BY created_at DESC',
+    params[:key_id]
+  )
+  json_response({ subscribers: subs })
+end
+
+get '/api/admin/newsletter/:key_id/export' do
+  admin_auth!
+  subs = DB.execute(
+    'SELECT email, created_at FROM newsletter_subscribers WHERE api_key_id = ? ORDER BY created_at DESC',
+    params[:key_id]
+  )
+  content_type 'text/csv'
+  attachment "newsletter_#{params[:key_id]}.csv"
+  rows = subs.map { |s| "#{s['email']},#{s['created_at']}" }
+  "email,date\n" + rows.join("\n")
+end
+
+delete '/api/admin/newsletter/:id' do
+  admin_auth!
+  DB.execute('DELETE FROM newsletter_subscribers WHERE id = ?', params[:id])
+  LOGGER.warn("Abonné newsletter supprimé | ID: #{params[:id]}")
+  json_response({ success: true })
+end
+
+# ─────────────────────────────────────────
 #  Routes Admin — Domaines expéditeur email
+# ─────────────────────────────────────────
 post '/api/admin/domains' do
   admin_auth!
   request.body.rewind
   data = JSON.parse(request.body.read)
   id   = SecureRandom.uuid
 
-  # Normaliser le domaine (minuscules, sans espaces ni http://)
   domain = data['domain'].to_s.strip.downcase.gsub(%r{^https?://}, '').split('/').first
 
   begin
@@ -703,11 +866,35 @@ post '/api/admin/test-smtp' do
     from_email = data['smtp_from_email']
     from_name  = data['smtp_from_name']
 
+    test_html = <<~HTML
+      <div style="font-family:Inter,Arial,sans-serif;background:#080c14;padding:32px 16px">
+        <div style="max-width:480px;margin:0 auto;background:#0d1117;border:1px solid #1a2235;border-radius:12px;padding:32px">
+          <div style="font-size:18px;font-weight:700;color:#ffffff;margin-bottom:20px">FormTo</div>
+          <h2 style="color:#10b981;margin:0 0 12px;font-size:18px">✅ Configuration SMTP valide</h2>
+          <p style="color:#8b9cc4;line-height:1.6;font-size:14px;margin:0 0 20px">
+            Si vous recevez ce message, votre configuration SMTP fonctionne correctement
+            et FormTo pourra envoyer vos emails sans problème.
+          </p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <tr><td style="color:#4a5a7a;padding:6px 0">Hôte</td><td style="color:#c9d1e0;text-align:right">#{Rack::Utils.escape_html(smtp_host.to_s)}</td></tr>
+            <tr><td style="color:#4a5a7a;padding:6px 0">Port</td><td style="color:#c9d1e0;text-align:right">#{smtp_port}</td></tr>
+            <tr><td style="color:#4a5a7a;padding:6px 0">Utilisateur</td><td style="color:#c9d1e0;text-align:right">#{Rack::Utils.escape_html(smtp_user.to_s)}</td></tr>
+          </table>
+        </div>
+      </div>
+    HTML
+
     message = Mail.new do
       from    "#{from_name} <#{from_email}>"
       to      from_email
-      subject 'FormTo — Test SMTP'
-      text_part { body 'Si vous recevez ce message, votre configuration SMTP est correcte.' }
+      subject 'FormTo — Test SMTP ✅'
+      text_part do
+        body "Si vous recevez ce message, votre configuration SMTP est correcte.\n\nHôte: #{smtp_host}\nPort: #{smtp_port}\nUtilisateur: #{smtp_user}"
+      end
+      html_part do
+        content_type 'text/html; charset=UTF-8'
+        body test_html
+      end
     end
 
     message.delivery_method :smtp, {
@@ -716,7 +903,9 @@ post '/api/admin/test-smtp' do
       user_name:            smtp_user,
       password:             smtp_pass,
       authentication:       :plain,
-      enable_starttls_auto: true
+      enable_starttls_auto: true,
+      open_timeout:         10,
+      read_timeout:         10
     }
 
     message.deliver!
@@ -764,7 +953,7 @@ end
 # ─────────────────────────────────────────
 #  Check Update
 # ─────────────────────────────────────────
-CURRENT_VERSION = 'v1.2'.freeze
+CURRENT_VERSION = 'v1.3'.freeze
 DOCKER_IMAGE    = 'yidirk/formto'.freeze
 UPDATE_CACHE_FILE = '/tmp/formto_update_cache.json'.freeze
 
@@ -810,6 +999,7 @@ get '/api/admin/check-update' do
   return json_response({ update_available: false, error: 'Impossible de vérifier', current_version: CURRENT_VERSION }, 503) unless result
   json_response(result)
 end
+
 # ─────────────────────────────────────────
 #  Routes Admin — Stats & Logs
 # ─────────────────────────────────────────

@@ -1,7 +1,7 @@
 
         services:
           formto:
-            image: yidirk/formto:v1.2
+            image: yidirk/formto:v1.3
             container_name: formto
             restart: unless-stopped
             ports:
