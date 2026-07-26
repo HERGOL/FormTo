@@ -8,6 +8,7 @@ require 'dotenv/load' if ENV['RACK_ENV'] != 'production'
 require 'rack/cors'
 require 'rack/utils'
 require 'logger'
+require 'base64'
 
 # ─────────────────────────────────────────
 #  Configuration Sinatra
@@ -36,10 +37,6 @@ end
 # ─────────────────────────────────────────
 #  CORS
 # ─────────────────────────────────────────
-# NB: '*' reste correct ici car /api/send est protégé par clé API + origine,
-# et les routes /api/admin/* nécessitent le mot de passe admin en header
-# Authorization (un site tiers ne peut pas le connaître, donc CORS large
-# sur ces routes n'expose rien de sensible).
 use Rack::Cors do
   allow do
     origins '*'
@@ -50,7 +47,9 @@ end
 # ─────────────────────────────────────────
 #  Limite de taille du corps de requête (anti-abus / anti-DoS basique)
 # ─────────────────────────────────────────
-MAX_BODY_BYTES = 200_000 # 200 Ko, largement suffisant pour un formulaire de contact
+MAX_BODY_BYTES       = ENV.fetch('MAX_BODY_BYTES', '15000000').to_i        # 15 Mo par défaut
+MAX_ATTACHMENT_BYTES = ENV.fetch('MAX_ATTACHMENT_BYTES', '10000000').to_i  # 10 Mo par pièce jointe (déjà décodée)
+MAX_ATTACHMENTS      = ENV.fetch('MAX_ATTACHMENTS', '5').to_i
 
 before do
   cl = request.content_length.to_i
@@ -69,22 +68,10 @@ after do
   headers['Referrer-Policy']        = 'no-referrer'
 end
 
-# ─────────────────────────────────────────
-#  Base de données SQLite
-# ─────────────────────────────────────────
-# IMPORTANT: le fichier data.db vit dans DATA_DIR, PAS dans le dossier
-# de l'application. Quand vous mettez à jour l'image (nouveau code),
-# le contenu de /app est remplacé — mais si DATA_DIR pointe vers un
-# volume monté (ex: ./data:/app/data), la base survit à la mise à jour.
-# Par défaut DATA_DIR=/app/data ; à monter en volume dans docker-compose.
 DATA_DIR = ENV.fetch('DATA_DIR', File.join(File.dirname(__FILE__), 'data'))
 FileUtils.mkdir_p(DATA_DIR) unless Dir.exist?(DATA_DIR)
 DB_PATH = File.join(DATA_DIR, 'data.db')
 
-# Migration automatique : les versions précédentes stockaient data.db
-# directement dans le dossier de l'app (non persistant entre mises à
-# jour). Si on trouve une ancienne base à cet emplacement et qu'aucune
-# base n'existe encore dans DATA_DIR, on la déplace une seule fois.
 OLD_DB_PATH = File.join(File.dirname(__FILE__), 'data.db')
 if File.exist?(OLD_DB_PATH) && !File.exist?(DB_PATH)
   FileUtils.mv(OLD_DB_PATH, DB_PATH)
@@ -94,7 +81,6 @@ end
 DB = SQLite3::Database.new(DB_PATH)
 DB.results_as_hash = true
 
-# Activer les clés étrangères (nécessaire pour ON DELETE CASCADE)
 DB.execute('PRAGMA foreign_keys = ON')
 DB.execute('PRAGMA journal_mode = WAL')
 
@@ -109,13 +95,11 @@ DB.execute_batch <<-SQL
     smtp_pass           TEXT,
     smtp_from_email     TEXT,
     smtp_from_name      TEXT,
-    -- Adresse qui RECOIT les mails envoyés via cette clé.
-    -- Configurée UNIQUEMENT depuis le dashboard admin : le formulaire
-    -- client ne peut jamais choisir le destinataire (anti relai ouvert).
     notification_email  TEXT,
-    rate_limit_max       INTEGER DEFAULT NULL,
-    rate_limit_window    INTEGER DEFAULT 3600,
-    created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+    key_type             TEXT DEFAULT 'form',
+    rate_limit_max        INTEGER DEFAULT NULL,
+    rate_limit_window     INTEGER DEFAULT 3600,
+    created_at             DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS allowed_origins (
@@ -185,7 +169,6 @@ DB.execute_batch <<-SQL
     ON newsletter_campaigns(api_key_id);
 SQL
 
-# Migrations idempotentes
 begin
   DB.execute('ALTER TABLE api_keys ADD COLUMN rate_limit_max INTEGER DEFAULT NULL')
 rescue SQLite3::Exception
@@ -196,6 +179,10 @@ rescue SQLite3::Exception
 end
 begin
   DB.execute('ALTER TABLE api_keys ADD COLUMN notification_email TEXT')
+rescue SQLite3::Exception
+end
+begin
+  DB.execute("ALTER TABLE api_keys ADD COLUMN key_type TEXT DEFAULT 'form'")
 rescue SQLite3::Exception
 end
 begin
@@ -218,9 +205,6 @@ SQL
 LOGGER.info("DB initialisée → #{DB_PATH}")
 LOGGER.info("Clés chargées  → #{DB.execute('SELECT count(*) FROM api_keys').first[0]}")
 
-# ─────────────────────────────────────────
-#  Rate Limiting — Fenêtre glissante
-# ─────────────────────────────────────────
 GLOBAL_RATE_MAX    = ENV.fetch('RATE_LIMIT_GLOBAL_MAX',    '1000').to_i
 GLOBAL_RATE_WINDOW = ENV.fetch('RATE_LIMIT_GLOBAL_WINDOW', '3600').to_i
 
@@ -253,11 +237,6 @@ def check_and_record_rate_limit(scope, max_requests, window_seconds)
   end
 end
 
-# ─────────────────────────────────────────
-#  Helpers
-# ─────────────────────────────────────────
-
-# Format email simple mais strict (une seule adresse, pas de CR/LF, pas de virgule)
 EMAIL_REGEX = /\A[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\z/
 
 helpers do
@@ -267,17 +246,15 @@ helpers do
       email.match?(EMAIL_REGEX)
   end
 
-  # Empêche l'injection d'en-têtes SMTP (CRLF injection) même si la gem
-  # `mail` encode déjà proprement les champs — défense en profondeur.
   def sanitize_header_value(str, max_len: 500)
     return nil if str.nil?
     str.to_s.gsub(/[\r\n]+/, ' ').strip[0, max_len]
   end
 
-  # Protection anti brute-force sur le mot de passe admin : au-delà de
-  # ADMIN_LOGIN_MAX_FAILS échecs pour une IP donnée sur la fenêtre, les
-  # tentatives suivantes sont bloquées (429), même avec le bon mot de
-  # passe, le temps que la fenêtre expire.
+  def backend_key?
+    @key_config && @key_config['key_type'] == 'backend'
+  end
+
   ADMIN_LOGIN_MAX_FAILS   = ENV.fetch('ADMIN_LOGIN_MAX_FAILS', '10').to_i
   ADMIN_LOGIN_FAIL_WINDOW = ENV.fetch('ADMIN_LOGIN_FAIL_WINDOW', '300').to_i
 
@@ -341,7 +318,7 @@ helpers do
       halt 403, json_response({ error: 'Clé API invalide' }, 403)
     end
 
-    LOGGER.debug("Auth OK | Tenant: #{@key_config['name']}")
+    LOGGER.debug("Auth OK | Tenant: #{@key_config['name']} | Type: #{@key_config['key_type'] || 'form'}")
   end
 
   def check_rate_limits!
@@ -495,11 +472,45 @@ helpers do
 
     false
   end
+
+  # ── Construction explicite du message (texte + HTML + pièces jointes) ──
+  # On construit la structure MIME "à la main" plutôt que de laisser le
+  # DSL text_part/html_part + attachments deviner l'imbrication, pour
+  # garantir un multipart/mixed { multipart/alternative, pièce jointe }
+  # quel que soit le contenu ou la version de la gem `mail`.
+  def build_mail_message(from:, to:, subject:, text: nil, html: nil, reply_to: nil, attachments: [])
+    message = Mail.new
+    message.from    from
+    message.to      to
+    message.subject subject
+    message.reply_to reply_to if reply_to
+
+    if text && html
+      message.text_part = Mail::Part.new { body text }
+      message.html_part = Mail::Part.new { content_type 'text/html; charset=UTF-8'; body html }
+    elsif html
+      message.html_part = Mail::Part.new { content_type 'text/html; charset=UTF-8'; body html }
+    elsif text
+      message.body = text
+    end
+
+    attachments.each do |att|
+      message.attachments[att[:filename]] = { mime_type: att[:content_type], content: att[:data] }
+    end
+
+    # Filet de sécurité : si pour une raison quelconque le message n'est
+    # pas passé en multipart/mixed alors qu'il y a des pièces jointes,
+    # on le force explicitement (évite qu'un PDF finisse "aplati" dans
+    # le corps du mail au lieu d'être une vraie pièce jointe).
+    if attachments.any? && message.content_type !~ /multipart\/mixed/i
+      LOGGER.warn("Content-Type inattendu avec pièce(s) jointe(s) : #{message.content_type.inspect} — forçage en multipart/mixed")
+      message.content_type = 'multipart/mixed'
+    end
+
+    message
+  end
 end
 
-# ─────────────────────────────────────────
-#  Middleware logging HTTP
-# ─────────────────────────────────────────
 before do
   LOGGER.info("→ #{request.request_method} #{request.path_info} | IP: #{request.ip}")
 end
@@ -527,20 +538,30 @@ post '/api/send' do
     halt 400, json_response({ error: 'Corps JSON invalide' }, 400)
   end
 
-  # ── Destinataire : JAMAIS fourni par le client. ──────────────────
-  # Il est fixé une fois pour toutes dans le dashboard admin, par clé API.
-  # Ainsi, même si la clé fuite ou que l'origine est mal configurée,
-  # personne ne peut détourner FormTo pour spammer un tiers.
-  to = @key_config['notification_email']
+  if backend_key?
+    to = sanitize_header_value(payload['to'])
 
-  unless valid_email?(to)
-    msg = "Aucun email destinataire valide configuré pour cette clé"
-    LOGGER.error("#{msg} | Tenant: #{@key_config['name']}")
-    log_request(status: 'error', error_msg: msg)
-    halt 500, json_response({
-                              error: "Cette clé API n'a pas d'email destinataire configuré. Configurez-le dans le dashboard admin.",
-                              code:  'NOTIFICATION_EMAIL_MISSING'
-                            }, 500)
+    unless valid_email?(to)
+      msg = "Champ 'to' invalide ou manquant (clé de type backend)"
+      LOGGER.warn("#{msg} | Tenant: #{@key_config['name']}")
+      log_request(status: 'error', error_msg: msg)
+      halt 400, json_response({
+                                error: "Le champ 'to' est requis et doit être une adresse email valide pour une clé de type backend.",
+                                code:  'TO_REQUIRED'
+                              }, 400)
+    end
+  else
+    to = @key_config['notification_email']
+
+    unless valid_email?(to)
+      msg = "Aucun email destinataire valide configuré pour cette clé"
+      LOGGER.error("#{msg} | Tenant: #{@key_config['name']}")
+      log_request(status: 'error', error_msg: msg)
+      halt 500, json_response({
+                                error: "Cette clé API n'a pas d'email destinataire configuré. Configurez-le dans le dashboard admin.",
+                                code:  'NOTIFICATION_EMAIL_MISSING'
+                              }, 500)
+    end
   end
 
   subject  = sanitize_header_value(payload['subject'], max_len: 250)
@@ -562,7 +583,55 @@ post '/api/send' do
     halt 400, json_response({ error: 'Contenu du message requis (text ou html)' }, 400)
   end
 
-  # Résoudre l'adresse expéditrice finale
+  attachments = []
+  if payload['attachments']
+    unless backend_key?
+      msg = "Pièces jointes fournies sur une clé de type 'form'"
+      LOGGER.warn("#{msg} | Tenant: #{@key_config['name']}")
+      log_request(status: 'error', error_msg: msg, recipient: to, subject: subject)
+      halt 403, json_response({
+                                error: "Les pièces jointes ne sont autorisées que pour les clés de type backend.",
+                                code:  'ATTACHMENTS_NOT_ALLOWED'
+                              }, 403)
+    end
+
+    unless payload['attachments'].is_a?(Array)
+      halt 400, json_response({ error: "Le champ 'attachments' doit être un tableau." }, 400)
+    end
+
+    if payload['attachments'].size > MAX_ATTACHMENTS
+      halt 400, json_response({ error: "Trop de pièces jointes (max #{MAX_ATTACHMENTS})." }, 400)
+    end
+
+    payload['attachments'].each do |att|
+      unless att.is_a?(Hash) && att['filename'] && att['content']
+        halt 400, json_response({ error: "Chaque pièce jointe doit avoir 'filename' et 'content' (base64)." }, 400)
+      end
+
+      filename     = sanitize_header_value(att['filename'], max_len: 150)
+      content_type = att['content_type'].to_s.strip
+      content_type = 'application/octet-stream' if content_type.empty?
+
+      raw_bytes = begin
+                    Base64.strict_decode64(att['content'].to_s)
+                  rescue ArgumentError
+                    nil
+                  end
+
+      if raw_bytes.nil?
+        halt 400, json_response({ error: "Pièce jointe '#{filename}' : contenu base64 invalide." }, 400)
+      end
+
+      if raw_bytes.bytesize > MAX_ATTACHMENT_BYTES
+        halt 413, json_response({
+                                  error: "Pièce jointe '#{filename}' trop volumineuse (max #{MAX_ATTACHMENT_BYTES / 1_000_000} Mo)."
+                                }, 413)
+      end
+
+      attachments << { filename: filename, content_type: content_type, data: raw_bytes }
+    end
+  end
+
   from_email      = from_raw && valid_email?(sanitize_header_value(from_raw)) ? sanitize_header_value(from_raw) : @key_config['smtp_from_email']
   from_domain     = extract_domain(from_email)
   config_domain   = extract_domain(@key_config['smtp_from_email'])
@@ -585,22 +654,19 @@ post '/api/send' do
     end
   end
 
-  # reply_to est optionnel et sans risque : il ne change jamais le
-  # destinataire réel du mail, seulement l'adresse pré-remplie en cas
-  # de réponse (pratique pour un formulaire de contact).
   reply_to = payload['reply_to']
   reply_to = sanitize_header_value(reply_to)
   reply_to = nil unless reply_to && valid_email?(reply_to)
 
-  LOGGER.info("Envoi | #{from_email} → #{to} | \"#{subject}\" | Tenant: #{@key_config['name']}")
+  LOGGER.info("Envoi | #{from_email} → #{to} | \"#{subject}\" | Tenant: #{@key_config['name']}#{attachments.any? ? " | #{attachments.size} pièce(s) jointe(s)" : ''}")
 
   begin
-    smtp_from_name        = @key_config['smtp_from_name']
-    smtp_from_email_cfg    = @key_config['smtp_from_email']
-    smtp_host              = @key_config['smtp_host']
-    smtp_port               = @key_config['smtp_port']
-    smtp_user               = @key_config['smtp_user']
-    smtp_pass                = @key_config['smtp_pass']
+    smtp_from_name       = @key_config['smtp_from_name']
+    smtp_from_email_cfg  = @key_config['smtp_from_email']
+    smtp_host            = @key_config['smtp_host']
+    smtp_port            = @key_config['smtp_port']
+    smtp_user            = @key_config['smtp_user']
+    smtp_pass            = @key_config['smtp_pass']
 
     display_from = if from_raw && from_email != smtp_from_email_cfg
                      from_email
@@ -608,13 +674,16 @@ post '/api/send' do
                      "#{sanitize_header_value(smtp_from_name)} <#{smtp_from_email_cfg}>"
                    end
 
-    message = Mail.new do
-      from     display_from
-      to       to
-      subject  subject
-      reply_to reply_to if reply_to
-      text_part { body text } if text
-      html_part { content_type 'text/html; charset=UTF-8'; body html } if html
+    message = build_mail_message(
+      from: display_from, to: to, subject: subject,
+      text: text, html: html, reply_to: reply_to,
+      attachments: attachments
+    )
+
+    LOGGER.debug("Content-Type du message construit : #{message.content_type}")
+    if attachments.any?
+      part_types = message.all_parts.map { |p| "#{p.content_type} (disposition: #{p.content_disposition})" }
+      LOGGER.debug("Parts du message : #{part_types.join(' | ')}")
     end
 
     message.delivery_method :smtp, {
@@ -662,13 +731,6 @@ post '/api/send' do
   end
 end
 
-# ─────────────────────────────────────────
-#  POST /api/subscribe — Inscription newsletter
-# ─────────────────────────────────────────
-# Réutilise les mêmes protections que /api/send : clé API valide,
-# origine autorisée (si configurée) et rate limiting. L'email n'est
-# jamais renvoyé publiquement et les doublons ne sont pas signalés
-# (pour éviter l'énumération d'adresses déjà inscrites).
 post '/api/subscribe' do
   api_key_auth!
   check_origin!
@@ -692,7 +754,6 @@ post '/api/subscribe' do
     LOGGER.info("Newsletter: nouvel abonné | Tenant: #{@key_config['name']}")
     log_request(status: 'success', recipient: email, subject: '[newsletter] inscription')
   rescue SQLite3::ConstraintException
-    # Déjà inscrit : on répond quand même succès, sans le préciser.
     LOGGER.debug("Newsletter: email déjà inscrit | Tenant: #{@key_config['name']}")
   rescue SQLite3::Exception => e
     LOGGER.error("Erreur inscription newsletter | #{e.message}")
@@ -703,12 +764,6 @@ post '/api/subscribe' do
   json_response({ success: true, message: 'Inscription confirmée.' })
 end
 
-# ─────────────────────────────────────────
-#  GET /api/unsubscribe/:token — Désinscription newsletter
-# ─────────────────────────────────────────
-# Route publique, sans authentification : le token à lui seul identifie
-# l'abonné (assez long et aléatoire pour ne pas être devinable). Utilisée
-# depuis le lien "se désinscrire" présent dans chaque campagne envoyée.
 get '/api/unsubscribe/:token' do
   sub = DB.get_first_row(
     'SELECT * FROM newsletter_subscribers WHERE unsubscribe_token = ?',
@@ -733,14 +788,11 @@ get '/api/unsubscribe/:token' do
   HTML
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Clés
-# ─────────────────────────────────────────
 get '/api/admin/config' do
   admin_auth!
   keys = DB.execute(<<-SQL)
     SELECT ak.id, ak.name, ak.api_key, ak.smtp_from_email, ak.smtp_from_name,
-           ak.notification_email, ak.rate_limit_max, ak.rate_limit_window, ak.created_at,
+           ak.notification_email, ak.key_type, ak.rate_limit_max, ak.rate_limit_window, ak.created_at,
            (SELECT COUNT(*) FROM newsletter_subscribers ns WHERE ns.api_key_id = ak.id) AS newsletter_count
     FROM api_keys ak
   SQL
@@ -767,20 +819,23 @@ post '/api/admin/keys' do
   rate_max    = data['rate_limit_max'].to_s.empty? ? nil : data['rate_limit_max'].to_i
   rate_window = (data['rate_limit_window'] || 3600).to_i
 
+  key_type = %w[form backend].include?(data['key_type']) ? data['key_type'] : 'form'
+
   notification_email = data['notification_email'].to_s.strip
-  unless valid_email?(notification_email)
+  if key_type == 'form' && !valid_email?(notification_email)
     halt 400, json_response({ error: "Email destinataire invalide ou manquant." }, 400)
   end
+  notification_email = nil if notification_email.empty?
 
   begin
     DB.execute(
-      'INSERT INTO api_keys (id, name, api_key, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name, notification_email, rate_limit_max, rate_limit_window)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO api_keys (id, name, api_key, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_from_email, smtp_from_name, notification_email, key_type, rate_limit_max, rate_limit_window)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, data['name'], api_key, data['smtp_host'], data['smtp_port'],
        data['smtp_user'], data['smtp_pass'], data['smtp_from_email'], data['smtp_from_name'],
-       notification_email, rate_max, rate_window]
+       notification_email, key_type, rate_max, rate_window]
     )
-    LOGGER.info("Clé créée | #{data['name']} | ID: #{id} | Destinataire: #{notification_email}")
+    LOGGER.info("Clé créée | #{data['name']} | ID: #{id} | Type: #{key_type} | Destinataire: #{notification_email || '—'}")
     json_response({ success: true, api_key: api_key })
   rescue SQLite3::Exception => e
     LOGGER.error("Erreur création clé | #{e.message}")
@@ -796,19 +851,22 @@ put '/api/admin/keys/:id' do
   rate_max    = data['rate_limit_max'].to_s.empty? ? nil : data['rate_limit_max'].to_i
   rate_window = (data['rate_limit_window'] || 3600).to_i
 
+  key_type = %w[form backend].include?(data['key_type']) ? data['key_type'] : 'form'
+
   notification_email = data['notification_email'].to_s.strip
-  unless valid_email?(notification_email)
+  if key_type == 'form' && !valid_email?(notification_email)
     halt 400, json_response({ error: "Email destinataire invalide ou manquant." }, 400)
   end
+  notification_email = nil if notification_email.empty?
 
   begin
     DB.execute(
-      'UPDATE api_keys SET name=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_from_email=?, smtp_from_name=?, notification_email=?, rate_limit_max=?, rate_limit_window=? WHERE id=?',
+      'UPDATE api_keys SET name=?, smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_from_email=?, smtp_from_name=?, notification_email=?, key_type=?, rate_limit_max=?, rate_limit_window=? WHERE id=?',
       [data['name'], data['smtp_host'], data['smtp_port'], data['smtp_user'],
        data['smtp_pass'], data['smtp_from_email'], data['smtp_from_name'],
-       notification_email, rate_max, rate_window, params[:id]]
+       notification_email, key_type, rate_max, rate_window, params[:id]]
     )
-    LOGGER.info("Clé mise à jour | ID: #{params[:id]} | Destinataire: #{notification_email}")
+    LOGGER.info("Clé mise à jour | ID: #{params[:id]} | Type: #{key_type} | Destinataire: #{notification_email || '—'}")
     json_response({ success: true })
   rescue SQLite3::Exception => e
     LOGGER.error("Erreur MAJ clé | #{e.message}")
@@ -824,9 +882,6 @@ delete '/api/admin/keys/:id' do
   json_response({ success: true })
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Origines HTTP autorisées
-# ─────────────────────────────────────────
 get '/api/admin/origins' do
   admin_auth!
   origins = DB.execute('SELECT * FROM allowed_origins ORDER BY api_key_id, label')
@@ -863,9 +918,6 @@ delete '/api/admin/origins/:id' do
   json_response({ success: true })
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Newsletter
-# ─────────────────────────────────────────
 get '/api/admin/newsletter/:key_id' do
   admin_auth!
   subs = DB.execute(
@@ -894,9 +946,6 @@ delete '/api/admin/newsletter/:id' do
   json_response({ success: true })
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Campagnes newsletter
-# ─────────────────────────────────────────
 get '/api/admin/newsletter/:key_id/campaigns' do
   admin_auth!
   campaigns = DB.execute(
@@ -981,9 +1030,6 @@ post '/api/admin/newsletter/:key_id/campaigns' do
   json_response({ success: true, sent_count: sent_count, failed_count: failed_count })
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Domaines expéditeur email
-# ─────────────────────────────────────────
 post '/api/admin/domains' do
   admin_auth!
   request.body.rewind
@@ -1075,9 +1121,6 @@ post '/api/admin/test-smtp' do
   end
 end
 
-# ─────────────────────────────────────────
-#  Rate Limit — Stats par clé
-# ─────────────────────────────────────────
 get '/api/admin/rate-limit-stats' do
   admin_auth!
 
@@ -1107,13 +1150,6 @@ get '/api/admin/rate-limit-stats' do
                 })
 end
 
-# ─────────────────────────────────────────
-#  Check Update
-# ─────────────────────────────────────────
-# La version courante est injectée au build de l'image Docker via
-# --build-arg APP_VERSION=v1.4 (voir Dockerfile), plutôt que codée en
-# dur ici — ça évite d'oublier de mettre à jour cette constante à
-# chaque release. En dev sans build-arg, retombe sur 'dev'.
 CURRENT_VERSION = ENV.fetch('APP_VERSION', 'dev').freeze
 DOCKER_IMAGE    = 'yidirk/formto'.freeze
 UPDATE_CACHE_FILE = '/tmp/formto_update_cache.json'.freeze
@@ -1162,9 +1198,6 @@ get '/api/admin/check-update' do
   json_response(result)
 end
 
-# ─────────────────────────────────────────
-#  Routes Admin — Stats & Logs
-# ─────────────────────────────────────────
 get '/api/admin/stats' do
   admin_auth!
 
@@ -1238,9 +1271,6 @@ get '/api/admin/logs' do
   json_response({ logs: logs, total: total, limit: limit, offset: offset })
 end
 
-# ─────────────────────────────────────────
-#  UI
-# ─────────────────────────────────────────
 get '/' do
   send_file File.join(settings.public_folder, 'index.html')
 end
